@@ -16,7 +16,7 @@ const config: Config = {
       colors: {
         background: "#0b1221",
         surface: "#101828",
-        accent: "#58d0ff",
+        accent: "var(--accent)",
         muted: "#1d2939",
         "status-running": "#10b981",
         "status-pending": "#f59e0b",

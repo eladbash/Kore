@@ -5,6 +5,7 @@ use reqwest::Client as HttpClient;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tauri::{AppHandle, Emitter};
+use tokio::io::{AsyncBufReadExt, BufReader};
 use tracing::{error, info, warn};
 
 // ── Types ────────────────────────────────────────────────────────────────
@@ -15,6 +16,8 @@ pub enum AIProvider {
     OpenAI,
     Anthropic,
     Ollama,
+    #[serde(rename = "claude_cli")]
+    ClaudeCli,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -27,9 +30,11 @@ pub struct AIConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DiagnoseRequest {
-    pub kind: String,
-    pub namespace: String,
-    pub name: String,
+    pub kind: Option<String>,
+    pub namespace: Option<String>,
+    pub name: Option<String>,
+    pub prompt: Option<String>,
+    pub session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -92,15 +97,20 @@ fn build_user_message(
 ) -> String {
     let mut parts = Vec::new();
 
-    parts.push(format!(
-        "Diagnose this Kubernetes {} `{}` in namespace `{}`{}.",
-        request.kind,
-        request.name,
-        request.namespace,
-        context_name
-            .map(|c| format!(" (context: {c})"))
-            .unwrap_or_default()
-    ));
+    // Use the user's prompt if provided, otherwise build a default diagnose message
+    if let (Some(kind), Some(name), Some(ns)) = (&request.kind, &request.name, &request.namespace) {
+        let user_prompt = request.prompt.as_deref().unwrap_or("Diagnose this resource and identify any issues.");
+        parts.push(format!(
+            "{user_prompt}\n\nResource: Kubernetes {kind} `{name}` in namespace `{ns}`{}.",
+            context_name
+                .map(|c| format!(" (context: {c})"))
+                .unwrap_or_default()
+        ));
+    } else if let Some(prompt) = &request.prompt {
+        parts.push(prompt.clone());
+    } else {
+        parts.push("Diagnose the current Kubernetes cluster and identify any issues.".to_string());
+    }
 
     if let Some(resource) = resource_json {
         let pretty = serde_json::to_string_pretty(resource).unwrap_or_default();
@@ -168,35 +178,41 @@ impl K8sState {
         config: AIConfig,
         request: DiagnoseRequest,
     ) -> Result<()> {
-        let session_id: String = {
+        // Use the frontend-provided session ID, or generate one as fallback
+        let session_id: String = request.session_id.clone().unwrap_or_else(|| {
             let mut rng = rand::thread_rng();
             (0..16)
                 .map(|_| format!("{:02x}", rng.gen::<u8>()))
                 .collect()
-        };
+        });
         let event_name = format!("ai-response://{session_id}");
 
+        let kind_str = request.kind.clone().unwrap_or_default();
+        let name_str = request.name.clone().unwrap_or_default();
+        let ns_str = request.namespace.clone().unwrap_or_default();
+
         info!(
-            kind = %request.kind,
-            name = %request.name,
-            namespace = %request.namespace,
+            kind = %kind_str,
+            name = %name_str,
+            namespace = %ns_str,
             provider = ?config.provider,
             "Starting AI diagnosis"
         );
 
-        // Emit the session ID so the frontend knows where to listen
-        if let Err(e) = app.emit("ai-session-started", &json!({ "sessionId": session_id })) {
-            error!(error = %e, "Failed to emit session start");
-        }
+        // ── Gather context (only if resource info is provided) ───────
 
-        // ── Gather context ───────────────────────────────────────────
+        let has_resource = request.kind.is_some() && request.name.is_some() && request.namespace.is_some();
 
-        let resource_kind = parse_resource_kind(&request.kind);
+        let resource_kind = if has_resource {
+            parse_resource_kind(&kind_str)
+        } else {
+            None
+        };
 
         // Describe the resource
         let resource_json = if let Some(ref rk) = resource_kind {
             match self
-                .describe_resource(rk.clone(), request.namespace.clone(), request.name.clone())
+                .describe_resource(rk.clone(), ns_str.clone(), name_str.clone())
                 .await
             {
                 Ok(val) => Some(val),
@@ -206,32 +222,35 @@ impl K8sState {
                 }
             }
         } else {
-            warn!(kind = %request.kind, "Unknown resource kind for AI diagnosis");
             None
         };
 
         // List events for the resource
-        let events = match self
-            .list_events_for_resource(
-                request.kind.clone(),
-                request.namespace.clone(),
-                request.name.clone(),
-            )
-            .await
-        {
-            Ok(evts) => evts,
-            Err(e) => {
-                warn!(error = %e, "Failed to list events for AI context");
-                Vec::new()
+        let events = if has_resource {
+            match self
+                .list_events_for_resource(
+                    kind_str.clone(),
+                    ns_str.clone(),
+                    name_str.clone(),
+                )
+                .await
+            {
+                Ok(evts) => evts,
+                Err(e) => {
+                    warn!(error = %e, "Failed to list events for AI context");
+                    Vec::new()
+                }
             }
+        } else {
+            Vec::new()
         };
 
         // Fetch pod logs if the resource is a pod
-        let logs = if matches!(request.kind.to_lowercase().as_str(), "pod" | "pods") {
+        let logs = if has_resource && matches!(kind_str.to_lowercase().as_str(), "pod" | "pods") {
             match self
                 .fetch_logs(
-                    request.namespace.clone(),
-                    request.name.clone(),
+                    ns_str.clone(),
+                    name_str.clone(),
                     None,
                     Some(200),
                     false,
@@ -249,9 +268,9 @@ impl K8sState {
         };
 
         // Fetch metrics if the resource is a pod
-        let metrics = if matches!(request.kind.to_lowercase().as_str(), "pod" | "pods") {
+        let metrics = if has_resource && matches!(kind_str.to_lowercase().as_str(), "pod" | "pods") {
             match self
-                .get_pod_metrics(request.namespace.clone(), request.name.clone())
+                .get_pod_metrics(ns_str.clone(), name_str.clone())
                 .await
             {
                 Ok(m) => Some(m),
@@ -295,6 +314,72 @@ impl K8sState {
         });
 
         Ok(())
+    }
+
+    /// List locally installed Ollama models.
+    pub async fn list_ollama_models(base_url: Option<&str>) -> Result<Vec<String>> {
+        let http = HttpClient::new();
+        let base = base_url.unwrap_or("http://localhost:11434");
+
+        let resp = http
+            .get(format!("{base}/api/tags"))
+            .send()
+            .await
+            .map_err(|e| K8sError::Validation(format!("Ollama connection failed: {e}")))?;
+
+        if !resp.status().is_success() {
+            return Err(K8sError::Validation(format!(
+                "Ollama returned HTTP {}",
+                resp.status()
+            )));
+        }
+
+        let body: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| K8sError::Validation(format!("Failed to parse Ollama response: {e}")))?;
+
+        let models = body
+            .get("models")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|m| m.get("name").and_then(|n| n.as_str()).map(|s| s.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        Ok(models)
+    }
+
+    /// Check if the `claude` CLI is available in PATH.
+    pub async fn claude_cli_available() -> Result<bool> {
+        let output = tokio::process::Command::new("claude")
+            .arg("--version")
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .output()
+            .await;
+
+        match output {
+            Ok(o) => Ok(o.status.success()),
+            Err(_) => Ok(false),
+        }
+    }
+
+    /// Return the known Claude CLI model aliases.
+    pub async fn list_claude_models() -> Result<Vec<String>> {
+        // Verify CLI is available first
+        if !Self::claude_cli_available().await? {
+            return Err(K8sError::Validation(
+                "Claude CLI is not installed or not in PATH".into(),
+            ));
+        }
+        Ok(vec![
+            "opus".to_string(),
+            "sonnet".to_string(),
+            "haiku".to_string(),
+        ])
     }
 
     /// Test that the configured AI provider is reachable and the API key is valid.
@@ -355,6 +440,7 @@ impl K8sState {
 
                 resp.status().is_success()
             }
+            AIProvider::ClaudeCli => Self::claude_cli_available().await?,
         };
 
         info!(provider = ?config.provider, success = result, "AI connection test");
@@ -371,6 +457,12 @@ async fn stream_ai_response(
     system_prompt: &str,
     user_message: &str,
 ) -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    // Claude CLI uses a subprocess instead of HTTP
+    if matches!(config.provider, AIProvider::ClaudeCli) {
+        return stream_claude_cli_response(app, event_name, config, system_prompt, user_message)
+            .await;
+    }
+
     let http = HttpClient::new();
 
     let response = match config.provider {
@@ -435,6 +527,10 @@ async fn stream_ai_response(
                 .send()
                 .await?
         }
+        AIProvider::ClaudeCli => {
+            // Handled above via early return
+            unreachable!()
+        }
     };
 
     if !response.status().is_success() {
@@ -473,6 +569,7 @@ async fn stream_ai_response(
                 AIProvider::OpenAI => parse_openai_sse_line(&line),
                 AIProvider::Anthropic => parse_anthropic_sse_line(&line),
                 AIProvider::Ollama => parse_ollama_stream_line(&line),
+                AIProvider::ClaudeCli => unreachable!(),
             };
 
             match content {
@@ -583,6 +680,185 @@ fn parse_ollama_stream_line(line: &str) -> SSEContent {
                 .unwrap_or("")
                 .to_string();
             SSEContent::Text(content)
+        }
+        Err(_) => SSEContent::Skip,
+    }
+}
+
+// ── Claude CLI streaming ─────────────────────────────────────────────────
+
+/// Stream AI response via the `claude` CLI subprocess.
+async fn stream_claude_cli_response(
+    app: &AppHandle,
+    event_name: &str,
+    config: &AIConfig,
+    system_prompt: &str,
+    user_message: &str,
+) -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let full_prompt = format!("{system_prompt}\n\n{user_message}");
+
+    let mut child = tokio::process::Command::new("claude")
+        .arg("-p")
+        .arg(&full_prompt)
+        .arg("--model")
+        .arg(&config.model)
+        .arg("--output-format")
+        .arg("stream-json")
+        .arg("--include-partial-messages")
+        .arg("--verbose")
+        .arg("--no-session-persistence")
+        .env_remove("CLAUDE_CODE_ENTRYPOINT")
+        .env_remove("CLAUDECODE")
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("Failed to spawn claude CLI: {e}"))?;
+
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or("Failed to capture claude CLI stdout")?;
+
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or("Failed to capture claude CLI stderr")?;
+
+    // Drain stderr in background to prevent pipe deadlock, and capture output
+    let stderr_handle = tokio::spawn(async move {
+        let mut stderr_reader = BufReader::new(stderr);
+        let mut stderr_buf = String::new();
+        let _ = tokio::io::AsyncReadExt::read_to_string(&mut stderr_reader, &mut stderr_buf).await;
+        stderr_buf
+    });
+
+    let mut reader = BufReader::new(stdout).lines();
+    let mut received_chunks = false;
+
+    while let Some(line) = reader.next_line().await? {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        match parse_claude_cli_stream_line(trimmed, received_chunks) {
+            SSEContent::Text(text) => {
+                if !text.is_empty() {
+                    received_chunks = true;
+                    app.emit(event_name, &AIStreamEvent::Chunk { content: text })?;
+                }
+            }
+            SSEContent::Done => {
+                app.emit(event_name, &AIStreamEvent::Done)?;
+                let _ = child.wait().await;
+                return Ok(());
+            }
+            SSEContent::Skip => {}
+        }
+    }
+
+    // Wait for the process to finish
+    let status = child.wait().await?;
+    let stderr_output = stderr_handle.await.unwrap_or_default();
+
+    if !status.success() {
+        let detail = if stderr_output.trim().is_empty() {
+            format!("Claude CLI exited with status {status}")
+        } else {
+            // Take last few lines of stderr for the error message
+            let last_lines: String = stderr_output
+                .lines()
+                .rev()
+                .take(5)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect::<Vec<_>>()
+                .join("\n");
+            format!("Claude CLI error: {last_lines}")
+        };
+        app.emit(
+            event_name,
+            &AIStreamEvent::Error { message: detail.clone() },
+        )?;
+        return Err(detail.into());
+    }
+
+    // Stream ended — emit done
+    app.emit(event_name, &AIStreamEvent::Done)?;
+    Ok(())
+}
+
+/// Parse a Claude CLI stream-json line (JSONL format).
+///
+/// With `--include-partial-messages`, streaming deltas look like:
+/// `{"type":"content_block_delta",...,"delta":{"type":"text_delta","text":"Hello"}}`
+///
+/// Without `--include-partial-messages`, complete messages look like:
+/// `{"type":"assistant","message":{"content":[{"type":"text","text":"Hello"}],...}}`
+///
+/// Result events look like:
+/// `{"type":"result","result":"full text",...}`
+fn parse_claude_cli_stream_line(line: &str, already_received_chunks: bool) -> SSEContent {
+    let parsed: std::result::Result<serde_json::Value, _> = serde_json::from_str(line);
+    match parsed {
+        Ok(val) => {
+            let top_type = val.get("type").and_then(|v| v.as_str()).unwrap_or("");
+
+            if top_type == "result" {
+                // The result event contains the full text in "result" field.
+                // Only use it if we haven't received any streaming deltas yet,
+                // to avoid duplicating content.
+                if !already_received_chunks {
+                    if let Some(text) = val.get("result").and_then(|v| v.as_str()) {
+                        if !text.is_empty() {
+                            return SSEContent::Text(text.to_string());
+                        }
+                    }
+                }
+                return SSEContent::Done;
+            }
+
+            // Streaming delta: content_block_delta at top level
+            if top_type == "content_block_delta" {
+                let text = val
+                    .pointer("/delta/text")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                return SSEContent::Text(text);
+            }
+
+            // Complete assistant message (emitted without --include-partial-messages)
+            if top_type == "assistant" {
+                let text = val
+                    .pointer("/message/content")
+                    .and_then(|v| v.as_array())
+                    .and_then(|arr| {
+                        let parts: Vec<&str> = arr
+                            .iter()
+                            .filter_map(|block| {
+                                if block.get("type").and_then(|t| t.as_str()) == Some("text") {
+                                    block.get("text").and_then(|t| t.as_str())
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect();
+                        if parts.is_empty() {
+                            None
+                        } else {
+                            Some(parts.join(""))
+                        }
+                    })
+                    .unwrap_or_default();
+                if !text.is_empty() {
+                    return SSEContent::Text(text);
+                }
+                return SSEContent::Skip;
+            }
+
+            SSEContent::Skip
         }
         Err(_) => SSEContent::Skip,
     }

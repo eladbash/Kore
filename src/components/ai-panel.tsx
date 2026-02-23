@@ -1,14 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Bot, Send, X, Copy, Sparkles, Loader2 } from "lucide-react";
+import { Bot, Send, X, Copy, Sparkles, Loader2, Settings2, Trash2 } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
 import { cn } from "@/lib/utils";
 import { useToast } from "./toast";
+import { AISettings } from "./ai-settings";
 
 // ── Types ────────────────────────────────────────────────────────────────
 
 export interface AIConfig {
-  provider: "openai" | "anthropic" | "ollama";
+  provider: "openai" | "anthropic" | "ollama" | "claude_cli";
   api_key?: string;
   model: string;
   base_url?: string;
@@ -26,8 +27,11 @@ interface AIResponsePayload {
 }
 
 export interface DiagnoseRequest {
-  context?: { kind: string; namespace: string; name: string };
+  kind?: string;
+  namespace?: string;
+  name?: string;
   prompt: string;
+  session_id: string;
 }
 
 interface AIPanelProps {
@@ -78,6 +82,8 @@ export function AIPanel({ open, onClose, resourceContext }: AIPanelProps) {
   const [input, setInput] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
   const [sessionId, setSessionId] = useState(() => nextSessionId());
+  const [showSettings, setShowSettings] = useState(false);
+  const [aiConfig, setAiConfig] = useState<AIConfig>(() => loadAIConfig());
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -109,68 +115,18 @@ export function AIPanel({ open, onClose, resourceContext }: AIPanelProps) {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [open, onClose]);
 
-  // Listen for AI streaming response events
+  // Ref to hold the current unlisten function so sendMessage can manage listeners
+  const unlistenRef = useRef<(() => void) | null>(null);
+
+  // Clean up listener when panel closes
   useEffect(() => {
-    if (!open) return;
-
-    let unlistenFn: (() => void) | null = null;
-    let isMounted = true;
-
-    const setupListener = async () => {
-      const eventName = `ai-response://${sessionId}`;
-      const unlisten = await listen<AIResponsePayload>(eventName, (event) => {
-        if (!isMounted) return;
-        const payload = event.payload;
-
-        if (payload.type === "chunk" && payload.content) {
-          setMessages((prev) => {
-            const last = prev[prev.length - 1];
-            if (last && last.role === "assistant") {
-              const updated = [...prev];
-              updated[updated.length - 1] = {
-                ...last,
-                content: last.content + payload.content,
-              };
-              return updated;
-            }
-            return [...prev, { role: "assistant", content: payload.content! }];
-          });
-        } else if (payload.type === "done") {
-          setIsStreaming(false);
-        } else if (payload.type === "error") {
-          setIsStreaming(false);
-          const errorMsg = payload.message || "An unknown error occurred.";
-          setMessages((prev) => {
-            const last = prev[prev.length - 1];
-            if (last && last.role === "assistant") {
-              const updated = [...prev];
-              updated[updated.length - 1] = {
-                ...last,
-                content: last.content + `\n\n[Error: ${errorMsg}]`,
-              };
-              return updated;
-            }
-            return [...prev, { role: "assistant", content: `[Error: ${errorMsg}]` }];
-          });
-        }
-      });
-
-      if (!isMounted) {
-        unlisten();
-        return;
+    if (!open) {
+      if (unlistenRef.current) {
+        unlistenRef.current();
+        unlistenRef.current = null;
       }
-      unlistenFn = unlisten;
-    };
-
-    setupListener().catch((err) => {
-      console.error("Failed to set up AI response listener", err);
-    });
-
-    return () => {
-      isMounted = false;
-      if (unlistenFn) unlistenFn();
-    };
-  }, [open, sessionId]);
+    }
+  }, [open]);
 
   const sendMessage = useCallback(
     async (text: string) => {
@@ -185,12 +141,65 @@ export function AIPanel({ open, onClose, resourceContext }: AIPanelProps) {
       const newSessionId = nextSessionId();
       setSessionId(newSessionId);
 
-      const config = loadAIConfig();
+      // Clean up previous listener
+      if (unlistenRef.current) {
+        unlistenRef.current();
+        unlistenRef.current = null;
+      }
 
+      // Set up listener BEFORE calling the backend to avoid race conditions
       try {
-        await aiDiagnose(config, {
-          context: resourceContext,
+        const eventName = `ai-response://${newSessionId}`;
+        const unlisten = await listen<AIResponsePayload>(eventName, (event) => {
+          const payload = event.payload;
+
+          if (payload.type === "chunk" && payload.content) {
+            setMessages((prev) => {
+              const last = prev[prev.length - 1];
+              if (last && last.role === "assistant") {
+                const updated = [...prev];
+                updated[updated.length - 1] = {
+                  ...last,
+                  content: last.content + payload.content,
+                };
+                return updated;
+              }
+              return [...prev, { role: "assistant", content: payload.content! }];
+            });
+          } else if (payload.type === "done") {
+            setIsStreaming(false);
+          } else if (payload.type === "error") {
+            setIsStreaming(false);
+            const errorMsg = payload.message || "An unknown error occurred.";
+            setMessages((prev) => {
+              const last = prev[prev.length - 1];
+              if (last && last.role === "assistant") {
+                const updated = [...prev];
+                updated[updated.length - 1] = {
+                  ...last,
+                  content: last.content + `\n\n[Error: ${errorMsg}]`,
+                };
+                return updated;
+              }
+              return [...prev, { role: "assistant", content: `[Error: ${errorMsg}]` }];
+            });
+          }
+        });
+        unlistenRef.current = unlisten;
+      } catch (err) {
+        console.error("Failed to set up AI response listener", err);
+        setIsStreaming(false);
+        return;
+      }
+
+      // Now call the backend — listener is already active
+      try {
+        await aiDiagnose(aiConfig, {
+          kind: resourceContext?.kind,
+          namespace: resourceContext?.namespace,
+          name: resourceContext?.name,
           prompt: text.trim(),
+          session_id: newSessionId,
         });
       } catch (err) {
         setIsStreaming(false);
@@ -198,7 +207,7 @@ export function AIPanel({ open, onClose, resourceContext }: AIPanelProps) {
         setMessages((prev) => [...prev, { role: "assistant", content: `[Error: ${errMsg}]` }]);
       }
     },
-    [isStreaming, resourceContext],
+    [isStreaming, resourceContext, aiConfig],
   );
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -258,14 +267,30 @@ export function AIPanel({ open, onClose, resourceContext }: AIPanelProps) {
                 </div>
               </div>
               <div className="flex items-center gap-1">
-                {messages.length > 0 && (
-                  <button
-                    onClick={handleClearChat}
-                    className="px-2 py-1 rounded text-[10px] text-slate-500 hover:text-slate-300 hover:bg-muted/50 transition"
-                  >
-                    Clear
-                  </button>
-                )}
+                <button
+                  onClick={handleClearChat}
+                  disabled={messages.length === 0}
+                  className={cn(
+                    "p-1.5 rounded-md transition",
+                    messages.length > 0
+                      ? "text-slate-400 hover:text-red-400 hover:bg-muted/50"
+                      : "text-slate-700 cursor-not-allowed",
+                  )}
+                  aria-label="Clear chat"
+                  title="Clear chat"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+                <button
+                  onClick={() => setShowSettings((v) => !v)}
+                  className={cn(
+                    "p-1.5 rounded-md hover:bg-muted/50 transition",
+                    showSettings ? "text-accent" : "text-slate-400 hover:text-slate-200",
+                  )}
+                  aria-label="AI settings"
+                >
+                  <Settings2 className="w-4 h-4" />
+                </button>
                 <button
                   onClick={onClose}
                   className="p-1.5 rounded-md hover:bg-muted/50 transition text-slate-400 hover:text-slate-200"
@@ -276,8 +301,15 @@ export function AIPanel({ open, onClose, resourceContext }: AIPanelProps) {
               </div>
             </div>
 
+            {/* AI Settings (collapsible) */}
+            {showSettings && (
+              <div className="px-4 py-4 border-b border-slate-800/50 bg-background/50">
+                <AISettings config={aiConfig} onConfigChange={setAiConfig} />
+              </div>
+            )}
+
             {/* Resource Context Indicator */}
-            {resourceContext && (
+            {resourceContext && !showSettings && (
               <div className="px-4 py-2 border-b border-slate-800/50 bg-accent/5">
                 <div className="flex items-center gap-2 text-xs">
                   <Sparkles className="w-3.5 h-3.5 text-accent shrink-0" />

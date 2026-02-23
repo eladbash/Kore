@@ -4,6 +4,7 @@
 
 :root {
   color-scheme: dark;
+  --accent: #58d0ff;
 }
 
 body {
@@ -54,7 +55,7 @@ body::before {
 /* Focus ring */
 *:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 2px rgba(88, 208, 255, 0.4);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 40%, transparent);
   border-radius: 4px;
 }
 

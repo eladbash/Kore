@@ -7,7 +7,7 @@ import { useToast } from "./toast";
 // ── Types ────────────────────────────────────────────────────────────────
 
 export interface AIConfig {
-  provider: "openai" | "anthropic" | "ollama";
+  provider: "openai" | "anthropic" | "ollama" | "claude_cli";
   api_key?: string;
   model: string;
   base_url?: string;
@@ -46,6 +46,13 @@ const providers: ProviderOption[] = [
     needsBaseUrl: true,
     defaultBaseUrl: "http://localhost:11434",
   },
+  {
+    id: "claude_cli",
+    label: "Claude Code",
+    defaultModel: "sonnet",
+    needsApiKey: false,
+    needsBaseUrl: false,
+  },
 ];
 
 const STORAGE_KEY = "kore-ai-config";
@@ -55,6 +62,9 @@ const STORAGE_KEY = "kore-ai-config";
 export function AISettings({ config, onConfigChange }: AISettingsProps) {
   const [isTesting, setIsTesting] = useState(false);
   const [testResult, setTestResult] = useState<"success" | "error" | null>(null);
+  const [ollamaModels, setOllamaModels] = useState<string[]>([]);
+  const [claudeModels, setClaudeModels] = useState<string[]>([]);
+  const [loadingModels, setLoadingModels] = useState(false);
   const toast = useToast();
 
   const currentProvider = providers.find((p) => p.id === config.provider) || providers[0];
@@ -67,6 +77,69 @@ export function AISettings({ config, onConfigChange }: AISettingsProps) {
       // ignore write errors
     }
   }, [config]);
+
+  // Fetch installed Ollama models when provider is ollama
+  useEffect(() => {
+    if (config.provider !== "ollama") {
+      setOllamaModels([]);
+      return;
+    }
+
+    let cancelled = false;
+    const fetchModels = async () => {
+      setLoadingModels(true);
+      try {
+        const { invoke } = await import("@tauri-apps/api/core");
+        const models = await invoke<string[]>("list_ollama_models", {
+          baseUrl: config.base_url || null,
+        });
+        if (!cancelled) {
+          setOllamaModels(models);
+          // Auto-select first model if current model isn't in the list
+          if (models.length > 0 && !models.includes(config.model)) {
+            onConfigChange({ ...config, model: models[0] });
+          }
+        }
+      } catch {
+        if (!cancelled) setOllamaModels([]);
+      } finally {
+        if (!cancelled) setLoadingModels(false);
+      }
+    };
+
+    fetchModels();
+    return () => { cancelled = true; };
+  }, [config.provider, config.base_url]);
+
+  // Fetch Claude CLI models when provider is claude_cli
+  useEffect(() => {
+    if (config.provider !== "claude_cli") {
+      setClaudeModels([]);
+      return;
+    }
+
+    let cancelled = false;
+    const fetchModels = async () => {
+      setLoadingModels(true);
+      try {
+        const { invoke } = await import("@tauri-apps/api/core");
+        const models = await invoke<string[]>("list_claude_models");
+        if (!cancelled) {
+          setClaudeModels(models);
+          if (models.length > 0 && !models.includes(config.model)) {
+            onConfigChange({ ...config, model: models[0] });
+          }
+        }
+      } catch {
+        if (!cancelled) setClaudeModels([]);
+      } finally {
+        if (!cancelled) setLoadingModels(false);
+      }
+    };
+
+    fetchModels();
+    return () => { cancelled = true; };
+  }, [config.provider]);
 
   const handleProviderChange = useCallback(
     (providerId: AIConfig["provider"]) => {
@@ -153,16 +226,53 @@ export function AISettings({ config, onConfigChange }: AISettingsProps) {
       {/* Model */}
       <div>
         <label className="block text-xs text-slate-400 mb-1.5">Model</label>
-        <input
-          type="text"
-          value={config.model}
-          onChange={(e) => {
-            setTestResult(null);
-            onConfigChange({ ...config, model: e.target.value });
-          }}
-          placeholder={currentProvider.defaultModel}
-          className="w-full px-3 py-2 bg-surface/60 border border-slate-800 rounded-lg text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:border-accent/50 transition font-mono"
-        />
+        {config.provider === "ollama" && ollamaModels.length > 0 ? (
+          <select
+            value={config.model}
+            onChange={(e) => {
+              setTestResult(null);
+              onConfigChange({ ...config, model: e.target.value });
+            }}
+            className="w-full px-3 py-2 bg-surface/60 border border-slate-800 rounded-lg text-sm text-slate-100 focus:outline-none focus:border-accent/50 transition font-mono appearance-none cursor-pointer"
+          >
+            {ollamaModels.map((model) => (
+              <option key={model} value={model}>
+                {model}
+              </option>
+            ))}
+          </select>
+        ) : config.provider === "claude_cli" && claudeModels.length > 0 ? (
+          <select
+            value={config.model}
+            onChange={(e) => {
+              setTestResult(null);
+              onConfigChange({ ...config, model: e.target.value });
+            }}
+            className="w-full px-3 py-2 bg-surface/60 border border-slate-800 rounded-lg text-sm text-slate-100 focus:outline-none focus:border-accent/50 transition font-mono appearance-none cursor-pointer"
+          >
+            {claudeModels.map((model) => (
+              <option key={model} value={model}>
+                {model}
+              </option>
+            ))}
+          </select>
+        ) : (config.provider === "ollama" || config.provider === "claude_cli") && loadingModels ? (
+          <div className="flex items-center gap-2 px-3 py-2 bg-surface/60 border border-slate-800 rounded-lg text-sm text-slate-500">
+            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            Loading models...
+          </div>
+        ) : (
+          <input
+            type="text"
+            value={config.model}
+            onChange={(e) => {
+              setTestResult(null);
+              onConfigChange({ ...config, model: e.target.value });
+            }}
+            placeholder={currentProvider.defaultModel}
+            className="w-full px-3 py-2 bg-surface/60 border border-slate-800 rounded-lg text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:border-accent/50 transition font-mono"
+          />
+        )}
       </div>
 
       {/* Base URL (Ollama) */}

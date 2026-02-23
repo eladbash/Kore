@@ -652,7 +652,7 @@ export function ResourceGraphView({ namespace, onSelectResource }: ResourceGraph
             refY={3}
             orient="auto"
           >
-            <path d="M 0 0 L 8 3 L 0 6 z" fill="#58d0ff" opacity={0.8} />
+            <path d="M 0 0 L 8 3 L 0 6 z" fill="var(--accent)" opacity={0.8} />
           </marker>
         </defs>
 
@@ -679,7 +679,7 @@ export function ResourceGraphView({ namespace, onSelectResource }: ResourceGraph
                 key={`${edge.source}-${edge.target}`}
                 d={computeEdgePath(source, target)}
                 fill="none"
-                stroke={isHighlighted ? "#58d0ff" : "#334155"}
+                stroke={isHighlighted ? "var(--accent)" : "#334155"}
                 strokeWidth={isHighlighted ? 2 : 1}
                 strokeDasharray={edge.relation === "owns" ? undefined : "4 3"}
                 opacity={isDimmed ? 0.15 : isHighlighted ? 0.9 : 0.5}

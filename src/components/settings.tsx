@@ -82,6 +82,8 @@ function loadSettings(): KoreSettings {
 
 function saveSettings(settings: KoreSettings) {
   localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+  // StorageEvent only fires in other windows; dispatch a custom event for same-window listeners
+  window.dispatchEvent(new CustomEvent("kore-settings-change"));
 }
 
 /** Hook to read settings from localStorage */
@@ -89,13 +91,16 @@ export function useSettings(): KoreSettings {
   const [settings, setSettings] = useState<KoreSettings>(() => loadSettings());
 
   useEffect(() => {
+    const reload = () => setSettings(loadSettings());
     const handleStorage = (e: StorageEvent) => {
-      if (e.key === SETTINGS_KEY) {
-        setSettings(loadSettings());
-      }
+      if (e.key === SETTINGS_KEY) reload();
     };
     window.addEventListener("storage", handleStorage);
-    return () => window.removeEventListener("storage", handleStorage);
+    window.addEventListener("kore-settings-change", reload);
+    return () => {
+      window.removeEventListener("storage", handleStorage);
+      window.removeEventListener("kore-settings-change", reload);
+    };
   }, []);
 
   return settings;

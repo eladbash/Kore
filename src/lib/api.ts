@@ -470,3 +470,13 @@ export async function aiDiagnose(config: AIConfig, request: DiagnoseRequest): Pr
 export async function aiTestConnection(config: AIConfig): Promise<boolean> {
   return invoke("ai_test_connection", { config });
 }
+
+// ── Favorites Persistence ────────────────────────────────────────────
+
+export async function loadFavorites(key: string): Promise<string[]> {
+  return invoke("load_favorites", { key });
+}
+
+export async function saveFavorites(key: string, values: string[]): Promise<void> {
+  return invoke("save_favorites", { key, values });
+}

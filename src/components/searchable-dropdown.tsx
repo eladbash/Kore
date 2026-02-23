@@ -1,6 +1,7 @@
-import { useState, useRef, useEffect, useMemo, type ReactNode } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo, type ReactNode } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ChevronDown, Search, Star } from "lucide-react";
+import { loadFavorites, saveFavorites } from "@/lib/api";
 
 interface SearchableDropdownProps {
   items: string[];
@@ -9,7 +10,7 @@ interface SearchableDropdownProps {
   placeholder?: string;
   label: string;
   allOption?: { label: string; value: string };
-  storageKey: string; // For localStorage favorites
+  storageKey: string; // Key for file-backed favorites persistence
   onOpen?: () => void;
 }
 
@@ -53,26 +54,26 @@ export function SearchableDropdown({
   const searchInputRef = useRef<HTMLInputElement>(null);
   const itemRefs = useRef<(HTMLButtonElement | null)[]>([]);
 
-  // Load favorites from localStorage on mount
+  // Load favorites from backend on mount
   useEffect(() => {
-    try {
-      const stored = localStorage.getItem(storageKey);
-      if (stored) {
-        setFavorites(new Set(JSON.parse(stored)));
-      }
-    } catch (err) {
-      console.error("Failed to load favorites", err);
-    }
+    let cancelled = false;
+    loadFavorites(storageKey)
+      .then((vals) => {
+        if (!cancelled && vals.length > 0) setFavorites(new Set(vals));
+      })
+      .catch((err) => console.error("Failed to load favorites", err));
+    return () => { cancelled = true; };
   }, [storageKey]);
 
-  // Save favorites to localStorage when they change
-  useEffect(() => {
-    try {
-      localStorage.setItem(storageKey, JSON.stringify(Array.from(favorites)));
-    } catch (err) {
-      console.error("Failed to save favorites", err);
-    }
-  }, [favorites, storageKey]);
+  // Persist favorites to backend file
+  const persistFavorites = useCallback(
+    (next: Set<string>) => {
+      saveFavorites(storageKey, Array.from(next)).catch((err) =>
+        console.error("Failed to save favorites", err),
+      );
+    },
+    [storageKey],
+  );
 
   // Reset highlighted index and refs when search query or items change
   useEffect(() => {
@@ -90,6 +91,7 @@ export function SearchableDropdown({
       } else {
         next.add(item);
       }
+      persistFavorites(next);
       return next;
     });
   };
@@ -250,7 +252,7 @@ export function SearchableDropdown({
           {isSelectedFavorite && (
             <Star className="w-3 h-3 fill-yellow-500 text-yellow-500 flex-shrink-0" />
           )}
-          <span className="truncate">{displayValue}</span>
+          <span className="truncate" title={displayValue}>{displayValue}</span>
         </div>
         <ChevronDown
           className={`w-4 h-4 flex-shrink-0 transition-transform ${isOpen ? "rotate-180" : ""}`}
@@ -334,7 +336,7 @@ export function SearchableDropdown({
                         {isFavorite && (
                           <Star className="w-3 h-3 fill-yellow-500 text-yellow-500 flex-shrink-0" />
                         )}
-                        <span className="truncate">
+                        <span className="truncate" title={displayLabel}>
                           {highlightMatch(displayLabel, searchQuery)}
                         </span>
                       </div>

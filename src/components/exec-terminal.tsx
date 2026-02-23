@@ -34,8 +34,8 @@ export function ExecTerminal({ namespace, podName, container }: ExecTerminalProp
       theme: {
         background: "#0b1221",
         foreground: "#e2e8f0",
-        cursor: "#58d0ff",
-        selectionBackground: "#58d0ff33",
+        cursor: getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() || "#58d0ff",
+        selectionBackground: (getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() || "#58d0ff") + "33",
         black: "#1e293b",
         red: "#f87171",
         green: "#4ade80",

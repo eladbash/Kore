@@ -1,5 +1,6 @@
 use crate::state::{K8sState, ResourceKind};
 use serde::Deserialize;
+use std::collections::HashMap;
 use tauri::State;
 
 #[derive(Debug, Deserialize)]
@@ -621,4 +622,61 @@ pub async fn ai_test_connection(
     K8sState::ai_test_connection(&config)
         .await
         .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn list_ollama_models(
+    base_url: Option<String>,
+) -> std::result::Result<Vec<String>, String> {
+    K8sState::list_ollama_models(base_url.as_deref())
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn claude_cli_available() -> std::result::Result<bool, String> {
+    K8sState::claude_cli_available()
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn list_claude_models() -> std::result::Result<Vec<String>, String> {
+    K8sState::list_claude_models()
+        .await
+        .map_err(|e| e.to_string())
+}
+
+// ── Favorites Persistence ────────────────────────────────────────────
+
+fn favorites_path() -> std::result::Result<std::path::PathBuf, String> {
+    let dir = dirs::home_dir()
+        .ok_or_else(|| "Cannot determine home directory".to_string())?
+        .join(".kore");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    Ok(dir.join("favorites.json"))
+}
+
+fn read_all_favorites() -> std::result::Result<HashMap<String, Vec<String>>, String> {
+    let path = favorites_path()?;
+    if !path.exists() {
+        return Ok(HashMap::new());
+    }
+    let data = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    serde_json::from_str(&data).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn load_favorites(key: String) -> std::result::Result<Vec<String>, String> {
+    let map = read_all_favorites()?;
+    Ok(map.get(&key).cloned().unwrap_or_default())
+}
+
+#[tauri::command]
+pub fn save_favorites(key: String, values: Vec<String>) -> std::result::Result<(), String> {
+    let mut map = read_all_favorites()?;
+    map.insert(key, values);
+    let path = favorites_path()?;
+    let data = serde_json::to_string_pretty(&map).map_err(|e| e.to_string())?;
+    std::fs::write(&path, data).map_err(|e| e.to_string())
 }

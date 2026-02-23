@@ -11,7 +11,7 @@ import { ResourceGraphView } from "./components/resource-graph";
 import { CrdBrowser } from "./components/crd-browser";
 import { HelmReleases } from "./components/helm-releases";
 import { HelmDetailView } from "./components/helm-detail-view";
-import { Settings as SettingsPage } from "./components/settings";
+import { Settings as SettingsPage, useSettings } from "./components/settings";
 import { ShortcutOverlay } from "./components/shortcut-overlay";
 import { AIPanel } from "./components/ai-panel";
 import { useK8sContext } from "./hooks/use-k8s-context";
@@ -100,6 +100,12 @@ export default function App() {
   const toast = useToast();
   const { pinned, togglePin, isPinned, removePin } = usePinnedResources();
   const { getHistory: getRestartHistory } = useRestartHistory();
+  const settings = useSettings();
+
+  // Apply accent color CSS variable when settings change
+  useEffect(() => {
+    document.documentElement.style.setProperty("--accent", settings.accentColor);
+  }, [settings.accentColor]);
 
   const [deleteConfirm, setDeleteConfirm] = useState<{
     open: boolean;
@@ -366,16 +372,18 @@ export default function App() {
               </div>
 
               <div className="flex items-center gap-2 shrink-0">
-                <button
-                  onClick={() => setShowLabelFilter(!showLabelFilter)}
-                  className={`px-2 py-1.5 rounded-lg border transition text-xs ${
-                    showLabelFilter || labelFilters.length > 0
-                      ? "border-accent/50 text-accent bg-accent/10"
-                      : "border-slate-800 text-slate-400 hover:text-slate-200"
-                  }`}
-                >
-                  <Filter className="w-3.5 h-3.5" />
-                </button>
+                {isTableView && (
+                  <button
+                    onClick={() => setShowLabelFilter(!showLabelFilter)}
+                    className={`px-2 py-1.5 rounded-lg border transition text-xs ${
+                      showLabelFilter || labelFilters.length > 0
+                        ? "border-accent/50 text-accent bg-accent/10"
+                        : "border-slate-800 text-slate-400 hover:text-slate-200"
+                    }`}
+                  >
+                    <Filter className="w-3.5 h-3.5" />
+                  </button>
+                )}
                 <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-slate-800 bg-surface/60 text-xs text-slate-300">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
                   <span className="font-mono truncate max-w-[140px]">

@@ -32,10 +32,6 @@ export function LabelFilterBar({ labels, onLabelsChange }: LabelFilterBarProps) 
     }
   };
 
-  if (labels.length === 0 && !input) {
-    return null;
-  }
-
   return (
     <div className="flex items-center gap-2 flex-wrap">
       <Filter className="w-3.5 h-3.5 text-slate-500 shrink-0" />

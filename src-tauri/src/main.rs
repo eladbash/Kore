@@ -78,6 +78,12 @@ fn main() {
             // Phase 4: AI
             ai_diagnose,
             ai_test_connection,
+            list_ollama_models,
+            claude_cli_available,
+            list_claude_models,
+            // Favorites persistence
+            load_favorites,
+            save_favorites,
         ])
         .build(tauri::generate_context!())
         .unwrap_or_else(|e| {
