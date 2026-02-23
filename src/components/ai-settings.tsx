@@ -108,7 +108,9 @@ export function AISettings({ config, onConfigChange }: AISettingsProps) {
     };
 
     fetchModels();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [config.provider, config.base_url]);
 
   // Fetch Claude CLI models when provider is claude_cli
@@ -138,7 +140,9 @@ export function AISettings({ config, onConfigChange }: AISettingsProps) {
     };
 
     fetchModels();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [config.provider]);
 
   const handleProviderChange = useCallback(

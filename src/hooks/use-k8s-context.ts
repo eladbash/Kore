@@ -36,11 +36,13 @@ export function useK8sContext() {
           // If exactly one favorite context exists, prefer it
           let initialContext = ctxs[0];
           try {
-            const favContexts = (await loadFavorites(FAVORITE_CONTEXTS_KEY)).filter(
-              (f) => ctxs.includes(f),
+            const favContexts = (await loadFavorites(FAVORITE_CONTEXTS_KEY)).filter((f) =>
+              ctxs.includes(f),
             );
             if (favContexts.length === 1) initialContext = favContexts[0];
-          } catch { /* ignore – fall back to first context */ }
+          } catch {
+            /* ignore – fall back to first context */
+          }
 
           await handleContextChange(initialContext);
         } else {
@@ -77,7 +79,9 @@ export function useK8sContext() {
             favNamespaces = (await loadFavorites(FAVORITE_NAMESPACES_KEY)).filter(
               (f) => f === "*" || ns.includes(f),
             );
-          } catch { /* ignore */ }
+          } catch {
+            /* ignore */
+          }
 
           setNamespace((currentNs) => {
             // If exactly one favorite namespace, always prefer it

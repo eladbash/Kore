@@ -99,7 +99,10 @@ fn build_user_message(
 
     // Use the user's prompt if provided, otherwise build a default diagnose message
     if let (Some(kind), Some(name), Some(ns)) = (&request.kind, &request.name, &request.namespace) {
-        let user_prompt = request.prompt.as_deref().unwrap_or("Diagnose this resource and identify any issues.");
+        let user_prompt = request
+            .prompt
+            .as_deref()
+            .unwrap_or("Diagnose this resource and identify any issues.");
         parts.push(format!(
             "{user_prompt}\n\nResource: Kubernetes {kind} `{name}` in namespace `{ns}`{}.",
             context_name
@@ -201,7 +204,8 @@ impl K8sState {
 
         // ── Gather context (only if resource info is provided) ───────
 
-        let has_resource = request.kind.is_some() && request.name.is_some() && request.namespace.is_some();
+        let has_resource =
+            request.kind.is_some() && request.name.is_some() && request.namespace.is_some();
 
         let resource_kind = if has_resource {
             parse_resource_kind(&kind_str)
@@ -228,11 +232,7 @@ impl K8sState {
         // List events for the resource
         let events = if has_resource {
             match self
-                .list_events_for_resource(
-                    kind_str.clone(),
-                    ns_str.clone(),
-                    name_str.clone(),
-                )
+                .list_events_for_resource(kind_str.clone(), ns_str.clone(), name_str.clone())
                 .await
             {
                 Ok(evts) => evts,
@@ -248,13 +248,7 @@ impl K8sState {
         // Fetch pod logs if the resource is a pod
         let logs = if has_resource && matches!(kind_str.to_lowercase().as_str(), "pod" | "pods") {
             match self
-                .fetch_logs(
-                    ns_str.clone(),
-                    name_str.clone(),
-                    None,
-                    Some(200),
-                    false,
-                )
+                .fetch_logs(ns_str.clone(), name_str.clone(), None, Some(200), false)
                 .await
             {
                 Ok(text) => Some(text),
@@ -268,11 +262,9 @@ impl K8sState {
         };
 
         // Fetch metrics if the resource is a pod
-        let metrics = if has_resource && matches!(kind_str.to_lowercase().as_str(), "pod" | "pods") {
-            match self
-                .get_pod_metrics(ns_str.clone(), name_str.clone())
-                .await
-            {
+        let metrics = if has_resource && matches!(kind_str.to_lowercase().as_str(), "pod" | "pods")
+        {
+            match self.get_pod_metrics(ns_str.clone(), name_str.clone()).await {
                 Ok(m) => Some(m),
                 Err(e) => {
                     warn!(error = %e, "Failed to fetch metrics for AI context");
@@ -344,7 +336,11 @@ impl K8sState {
             .and_then(|v| v.as_array())
             .map(|arr| {
                 arr.iter()
-                    .filter_map(|m| m.get("name").and_then(|n| n.as_str()).map(|s| s.to_string()))
+                    .filter_map(|m| {
+                        m.get("name")
+                            .and_then(|n| n.as_str())
+                            .map(|s| s.to_string())
+                    })
                     .collect()
             })
             .unwrap_or_default();
@@ -779,7 +775,9 @@ async fn stream_claude_cli_response(
         };
         app.emit(
             event_name,
-            &AIStreamEvent::Error { message: detail.clone() },
+            &AIStreamEvent::Error {
+                message: detail.clone(),
+            },
         )?;
         return Err(detail.into());
     }

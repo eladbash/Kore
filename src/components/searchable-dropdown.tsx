@@ -62,7 +62,9 @@ export function SearchableDropdown({
         if (!cancelled && vals.length > 0) setFavorites(new Set(vals));
       })
       .catch((err) => console.error("Failed to load favorites", err));
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [storageKey]);
 
   // Persist favorites to backend file
@@ -252,7 +254,9 @@ export function SearchableDropdown({
           {isSelectedFavorite && (
             <Star className="w-3 h-3 fill-yellow-500 text-yellow-500 flex-shrink-0" />
           )}
-          <span className="truncate" title={displayValue}>{displayValue}</span>
+          <span className="truncate" title={displayValue}>
+            {displayValue}
+          </span>
         </div>
         <ChevronDown
           className={`w-4 h-4 flex-shrink-0 transition-transform ${isOpen ? "rotate-180" : ""}`}
