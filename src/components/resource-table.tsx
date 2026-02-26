@@ -702,9 +702,9 @@ export function ResourceTable({
               data-row-index={index}
               aria-selected={index === selectedIndex}
               className={cn(
-                "transition cursor-pointer",
+                "transition-colors cursor-pointer",
                 index === selectedIndex
-                  ? "bg-accent/10 border-l-2 border-l-accent"
+                  ? "bg-slate-700/60"
                   : "hover:bg-muted/30",
               )}
               onClick={() => {
@@ -714,7 +714,10 @@ export function ResourceTable({
               onDoubleClick={() => onRowSelect?.(row.original)}
             >
               {row.getVisibleCells().map((cell) => (
-                <td key={cell.id} className="px-3 py-2 text-slate-100 font-mono text-xs">
+                <td key={cell.id} className={cn(
+                  "px-3 py-2 font-mono text-xs",
+                  index === selectedIndex ? "text-white" : "text-slate-100",
+                )}>
                   {flexRender(cell.column.columnDef.cell, cell.getContext())}
                 </td>
               ))}

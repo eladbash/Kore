@@ -27,6 +27,7 @@ import { PortForwarding } from "./port-forwarding";
 import { EventsTimeline } from "./events-timeline";
 import { ExecTerminal } from "./exec-terminal";
 import { YamlEditor } from "./yaml-editor";
+import { DescribeContent } from "./describe-content";
 import { useToast } from "./toast";
 import { cn } from "@/lib/utils";
 
@@ -143,18 +144,6 @@ function DescribeSkeleton() {
       </div>
     </div>
   );
-}
-
-function highlightJson(json: string): string {
-  return json
-    .replace(/("(?:[^"\\]|\\.)*")\s*:/g, '<span class="text-accent">$1</span>:')
-    .replace(
-      /:\s*("(?:[^"\\]|\\.)*")/g,
-      (match, value) => `: <span class="text-emerald-400">${value}</span>`,
-    )
-    .replace(/:\s*(\d+(?:\.\d+)?)\b/g, ': <span class="text-amber-400">$1</span>')
-    .replace(/:\s*(true|false)\b/g, ': <span class="text-indigo-400">$1</span>')
-    .replace(/:\s*(null)\b/g, ': <span class="text-slate-500">$1</span>');
 }
 
 /** Detect log level and return color class */
@@ -786,19 +775,12 @@ export function PodDetailsView({ pod, onBack }: PodDetailsViewProps) {
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
                   exit={{ opacity: 0 }}
-                  className="h-full overflow-auto bg-surface/30 border border-slate-800 rounded-lg m-4"
+                  className="h-full bg-surface/30 border border-slate-800 rounded-lg m-4 overflow-hidden"
                 >
                   {loading ? (
                     <DescribeSkeleton />
                   ) : (
-                    <div className="p-4 font-mono text-xs leading-relaxed">
-                      <pre
-                        className="whitespace-pre-wrap"
-                        dangerouslySetInnerHTML={{
-                          __html: highlightJson(describe || "No details available"),
-                        }}
-                      />
-                    </div>
+                    <DescribeContent content={describe} />
                   )}
                 </motion.div>
               ) : activeTab === "yaml" ? (

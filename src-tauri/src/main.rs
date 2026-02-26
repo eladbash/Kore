@@ -59,6 +59,7 @@ fn main() {
             rollback_deployment,
             // Phase 2: Dashboard + Events + Multi-Pod Logs
             get_cluster_health,
+            get_cluster_health_multi_cluster,
             query_stored_events,
             stream_multi_pod_logs,
             // Phase 3: CRD + Graph
@@ -77,6 +78,7 @@ fn main() {
             list_resources_multi_cluster,
             // Phase 4: AI
             ai_diagnose,
+            ai_chat,
             ai_test_connection,
             list_ollama_models,
             claude_cli_available,

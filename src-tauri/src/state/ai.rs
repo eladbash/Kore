@@ -46,6 +46,30 @@ enum AIStreamEvent {
     Done,
     #[serde(rename = "error")]
     Error { message: String },
+    #[serde(rename = "status")]
+    Status { message: String },
+}
+
+// ── Chat Types ──────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChatMessage {
+    pub role: String,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AIChatRequest {
+    pub messages: Vec<ChatMessage>,
+    pub session_id: String,
+    pub namespace: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct ToolCall {
+    id: String,
+    name: String,
+    arguments: serde_json::Value,
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────
@@ -160,6 +184,924 @@ fn build_user_message(
     }
 
     parts.join("\n\n")
+}
+
+// ── Tool Definitions ────────────────────────────────────────────────────
+
+fn build_tool_definitions(provider: &AIProvider) -> Vec<serde_json::Value> {
+    let tools = vec![
+        json!({
+            "name": "list_resources",
+            "description": "List Kubernetes resources of a given kind. Returns summarized fields for each resource.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "kind": {
+                        "type": "string",
+                        "enum": ["pods", "deployments", "services", "nodes", "events", "configmaps", "secrets", "ingresses", "jobs", "cronjobs"],
+                        "description": "The resource kind to list"
+                    },
+                    "namespace": {
+                        "type": "string",
+                        "description": "Namespace to filter by. Omit for all namespaces or cluster-scoped resources."
+                    },
+                    "label_selector": {
+                        "type": "string",
+                        "description": "Label selector to filter resources (e.g. 'app=nginx')"
+                    }
+                },
+                "required": ["kind"]
+            }
+        }),
+        json!({
+            "name": "get_cluster_health",
+            "description": "Get overall cluster health including health score, pod counts, node status, restart hotlist, pending pods, and recent warnings.",
+            "parameters": {
+                "type": "object",
+                "properties": {}
+            }
+        }),
+        json!({
+            "name": "describe_resource",
+            "description": "Get full details (spec, status, conditions) for a specific resource. Returns truncated JSON.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "kind": {
+                        "type": "string",
+                        "enum": ["pods", "deployments", "services", "nodes", "events", "configmaps", "secrets", "ingresses", "jobs", "cronjobs"],
+                        "description": "The resource kind"
+                    },
+                    "namespace": {
+                        "type": "string",
+                        "description": "The namespace of the resource"
+                    },
+                    "name": {
+                        "type": "string",
+                        "description": "The name of the resource"
+                    }
+                },
+                "required": ["kind", "namespace", "name"]
+            }
+        }),
+        json!({
+            "name": "get_resource_events",
+            "description": "Get events for a specific Kubernetes resource.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "kind": {
+                        "type": "string",
+                        "description": "The resource kind (e.g. 'Pod', 'Deployment')"
+                    },
+                    "namespace": {
+                        "type": "string",
+                        "description": "The namespace of the resource"
+                    },
+                    "name": {
+                        "type": "string",
+                        "description": "The name of the resource"
+                    }
+                },
+                "required": ["kind", "namespace", "name"]
+            }
+        }),
+        json!({
+            "name": "get_pod_logs",
+            "description": "Get recent logs for a pod.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "namespace": {
+                        "type": "string",
+                        "description": "Pod namespace"
+                    },
+                    "pod": {
+                        "type": "string",
+                        "description": "Pod name"
+                    },
+                    "tail_lines": {
+                        "type": "integer",
+                        "description": "Number of recent log lines to fetch (default 100)"
+                    },
+                    "container": {
+                        "type": "string",
+                        "description": "Container name (for multi-container pods)"
+                    }
+                },
+                "required": ["namespace", "pod"]
+            }
+        }),
+        json!({
+            "name": "get_pod_metrics",
+            "description": "Get CPU and memory metrics for a pod (requires Metrics Server).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "namespace": {
+                        "type": "string",
+                        "description": "Pod namespace"
+                    },
+                    "pod": {
+                        "type": "string",
+                        "description": "Pod name"
+                    }
+                },
+                "required": ["namespace", "pod"]
+            }
+        }),
+        json!({
+            "name": "search_resources",
+            "description": "Search across all resource kinds for resources matching a query string.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Search query (matches against name, namespace, labels)"
+                    },
+                    "namespace": {
+                        "type": "string",
+                        "description": "Namespace to limit search to"
+                    }
+                },
+                "required": ["query"]
+            }
+        }),
+        json!({
+            "name": "list_namespaces",
+            "description": "List all available namespaces in the cluster.",
+            "parameters": {
+                "type": "object",
+                "properties": {}
+            }
+        }),
+    ];
+
+    match provider {
+        AIProvider::OpenAI | AIProvider::Ollama => tools
+            .iter()
+            .map(|t| {
+                json!({
+                    "type": "function",
+                    "function": t
+                })
+            })
+            .collect(),
+        AIProvider::Anthropic => tools
+            .iter()
+            .map(|t| {
+                json!({
+                    "name": t["name"],
+                    "description": t["description"],
+                    "input_schema": t["parameters"]
+                })
+            })
+            .collect(),
+        AIProvider::ClaudeCli => vec![], // not used
+    }
+}
+
+/// Summarize a list of resources to reduce token usage.
+fn summarize_resources(kind: &str, resources: &[serde_json::Value]) -> serde_json::Value {
+    let items: Vec<serde_json::Value> = resources
+        .iter()
+        .take(100) // cap at 100
+        .map(|r| {
+            let name = r.pointer("/metadata/name").and_then(|v| v.as_str()).unwrap_or("");
+            let namespace = r
+                .pointer("/metadata/namespace")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let creation = r
+                .pointer("/metadata/creationTimestamp")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+
+            match kind.to_lowercase().as_str() {
+                "pods" => {
+                    let phase = r
+                        .pointer("/status/phase")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("Unknown");
+                    let restarts: i64 = r
+                        .pointer("/status/containerStatuses")
+                        .and_then(|v| v.as_array())
+                        .map(|cs| {
+                            cs.iter()
+                                .map(|c| c.get("restartCount").and_then(|v| v.as_i64()).unwrap_or(0))
+                                .sum()
+                        })
+                        .unwrap_or(0);
+                    let ready = r
+                        .pointer("/status/containerStatuses")
+                        .and_then(|v| v.as_array())
+                        .map(|cs| {
+                            let total = cs.len();
+                            let rdy = cs
+                                .iter()
+                                .filter(|c| c.get("ready").and_then(|v| v.as_bool()).unwrap_or(false))
+                                .count();
+                            format!("{rdy}/{total}")
+                        })
+                        .unwrap_or_default();
+                    let node = r
+                        .pointer("/spec/nodeName")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+
+                    // Detect issues
+                    let mut issues = Vec::new();
+                    if let Some(cs) = r.pointer("/status/containerStatuses").and_then(|v| v.as_array()) {
+                        for c in cs {
+                            if let Some(waiting) = c.pointer("/state/waiting/reason").and_then(|v| v.as_str()) {
+                                issues.push(waiting.to_string());
+                            }
+                        }
+                    }
+
+                    json!({
+                        "name": name, "namespace": namespace, "status": phase,
+                        "restarts": restarts, "ready": ready, "node": node,
+                        "age": creation, "issues": issues
+                    })
+                }
+                "deployments" => {
+                    let desired = r.pointer("/spec/replicas").and_then(|v| v.as_i64()).unwrap_or(0);
+                    let ready = r
+                        .pointer("/status/readyReplicas")
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(0);
+                    let available = r
+                        .pointer("/status/availableReplicas")
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(0);
+                    json!({
+                        "name": name, "namespace": namespace,
+                        "replicas_desired": desired, "replicas_ready": ready,
+                        "replicas_available": available, "age": creation
+                    })
+                }
+                "services" => {
+                    let svc_type = r
+                        .pointer("/spec/type")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("ClusterIP");
+                    let cluster_ip = r
+                        .pointer("/spec/clusterIP")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let ports: Vec<String> = r
+                        .pointer("/spec/ports")
+                        .and_then(|v| v.as_array())
+                        .map(|ps| {
+                            ps.iter()
+                                .map(|p| {
+                                    let port = p.get("port").and_then(|v| v.as_i64()).unwrap_or(0);
+                                    let proto = p
+                                        .get("protocol")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("TCP");
+                                    format!("{port}/{proto}")
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    json!({
+                        "name": name, "namespace": namespace,
+                        "type": svc_type, "clusterIP": cluster_ip,
+                        "ports": ports.join(", "), "age": creation
+                    })
+                }
+                "nodes" => {
+                    let status = r
+                        .pointer("/status/conditions")
+                        .and_then(|v| v.as_array())
+                        .and_then(|conds| {
+                            conds.iter().find(|c| {
+                                c.get("type").and_then(|v| v.as_str()) == Some("Ready")
+                            })
+                        })
+                        .and_then(|c| c.get("status").and_then(|v| v.as_str()))
+                        .map(|s| if s == "True" { "Ready" } else { "NotReady" })
+                        .unwrap_or("Unknown");
+                    let version = r
+                        .pointer("/status/nodeInfo/kubeletVersion")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    json!({
+                        "name": name, "status": status,
+                        "version": version, "age": creation
+                    })
+                }
+                "events" => {
+                    let reason = r.get("reason").and_then(|v| v.as_str()).unwrap_or("");
+                    let message = r.get("message").and_then(|v| v.as_str()).unwrap_or("");
+                    let event_type = r.get("type").and_then(|v| v.as_str()).unwrap_or("Normal");
+                    let count = r.get("count").and_then(|v| v.as_i64()).unwrap_or(1);
+                    let last = r
+                        .get("lastTimestamp")
+                        .or_else(|| r.pointer("/metadata/creationTimestamp"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let involved = r
+                        .pointer("/involvedObject/name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    json!({
+                        "type": event_type, "reason": reason, "message": message,
+                        "count": count, "last_seen": last,
+                        "involved_object": involved, "namespace": namespace
+                    })
+                }
+                _ => {
+                    let labels = r.pointer("/metadata/labels").cloned().unwrap_or(json!({}));
+                    json!({
+                        "name": name, "namespace": namespace,
+                        "age": creation, "labels": labels
+                    })
+                }
+            }
+        })
+        .collect();
+
+    json!({
+        "kind": kind,
+        "count": resources.len(),
+        "items": items
+    })
+}
+
+/// Execute a tool call against K8sState and return the result as JSON.
+async fn execute_tool(
+    state: &K8sState,
+    tool_name: &str,
+    arguments: &serde_json::Value,
+) -> std::result::Result<serde_json::Value, String> {
+    match tool_name {
+        "list_resources" => {
+            let kind_str = arguments
+                .get("kind")
+                .and_then(|v| v.as_str())
+                .unwrap_or("pods");
+            let rk = parse_resource_kind(kind_str)
+                .ok_or_else(|| format!("Unknown resource kind: {kind_str}"))?;
+            let namespace = arguments.get("namespace").and_then(|v| v.as_str()).map(String::from);
+            let label_selector = arguments
+                .get("label_selector")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+            let resources = state
+                .list_resources(rk, namespace, label_selector)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(summarize_resources(kind_str, &resources))
+        }
+        "get_cluster_health" => {
+            let health = state.get_cluster_health().await.map_err(|e| e.to_string())?;
+            serde_json::to_value(health).map_err(|e| e.to_string())
+        }
+        "describe_resource" => {
+            let kind_str = arguments
+                .get("kind")
+                .and_then(|v| v.as_str())
+                .unwrap_or("pods");
+            let rk = parse_resource_kind(kind_str)
+                .ok_or_else(|| format!("Unknown resource kind: {kind_str}"))?;
+            let namespace = arguments
+                .get("namespace")
+                .and_then(|v| v.as_str())
+                .unwrap_or("default")
+                .to_string();
+            let name = arguments
+                .get("name")
+                .and_then(|v| v.as_str())
+                .ok_or("name is required")?
+                .to_string();
+            let desc = state
+                .describe_resource(rk, namespace, name)
+                .await
+                .map_err(|e| e.to_string())?;
+            // Truncate to 8KB
+            let pretty = serde_json::to_string_pretty(&desc).unwrap_or_default();
+            if pretty.len() > 8_000 {
+                Ok(json!({
+                    "data": &pretty[..8_000],
+                    "truncated": true
+                }))
+            } else {
+                Ok(desc)
+            }
+        }
+        "get_resource_events" => {
+            let kind = arguments
+                .get("kind")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Pod")
+                .to_string();
+            let namespace = arguments
+                .get("namespace")
+                .and_then(|v| v.as_str())
+                .unwrap_or("default")
+                .to_string();
+            let name = arguments
+                .get("name")
+                .and_then(|v| v.as_str())
+                .ok_or("name is required")?
+                .to_string();
+            let events = state
+                .list_events_for_resource(kind, namespace, name)
+                .await
+                .map_err(|e| e.to_string())?;
+            let summarized: Vec<serde_json::Value> = events
+                .iter()
+                .take(30)
+                .map(|e| {
+                    json!({
+                        "type": e.get("type").and_then(|v| v.as_str()).unwrap_or("Normal"),
+                        "reason": e.get("reason").and_then(|v| v.as_str()).unwrap_or(""),
+                        "message": e.get("message").and_then(|v| v.as_str()).unwrap_or(""),
+                        "count": e.get("count").and_then(|v| v.as_i64()).unwrap_or(1),
+                    })
+                })
+                .collect();
+            Ok(json!({ "events": summarized }))
+        }
+        "get_pod_logs" => {
+            let namespace = arguments
+                .get("namespace")
+                .and_then(|v| v.as_str())
+                .unwrap_or("default")
+                .to_string();
+            let pod = arguments
+                .get("pod")
+                .and_then(|v| v.as_str())
+                .ok_or("pod is required")?
+                .to_string();
+            let tail_lines = arguments
+                .get("tail_lines")
+                .and_then(|v| v.as_i64())
+                .or(Some(100));
+            let container = arguments.get("container").and_then(|v| v.as_str()).map(String::from);
+            let logs = state
+                .fetch_logs(namespace, pod, container, tail_lines, false)
+                .await
+                .map_err(|e| e.to_string())?;
+            // Truncate logs to 6KB
+            let truncated = if logs.len() > 6_000 {
+                format!("[truncated]...\n{}", &logs[logs.len() - 6_000..])
+            } else {
+                logs
+            };
+            Ok(json!({ "logs": truncated }))
+        }
+        "get_pod_metrics" => {
+            let namespace = arguments
+                .get("namespace")
+                .and_then(|v| v.as_str())
+                .unwrap_or("default")
+                .to_string();
+            let pod = arguments
+                .get("pod")
+                .and_then(|v| v.as_str())
+                .ok_or("pod is required")?
+                .to_string();
+            let metrics = state
+                .get_pod_metrics(namespace, pod)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(metrics)
+        }
+        "search_resources" => {
+            let query = arguments
+                .get("query")
+                .and_then(|v| v.as_str())
+                .ok_or("query is required")?
+                .to_string();
+            let namespace = arguments.get("namespace").and_then(|v| v.as_str()).map(String::from);
+            let results = state
+                .search_resources(query, namespace)
+                .await
+                .map_err(|e| e.to_string())?;
+            let summarized: Vec<serde_json::Value> = results
+                .iter()
+                .take(50)
+                .map(|r| {
+                    let name = r.pointer("/metadata/name").and_then(|v| v.as_str()).unwrap_or("");
+                    let ns = r
+                        .pointer("/metadata/namespace")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let kind = r.get("kind").and_then(|v| v.as_str()).unwrap_or("");
+                    json!({ "name": name, "namespace": ns, "kind": kind })
+                })
+                .collect();
+            Ok(json!({ "results": summarized }))
+        }
+        "list_namespaces" => {
+            let namespaces = state.list_namespaces().await.map_err(|e| e.to_string())?;
+            Ok(json!({ "namespaces": namespaces }))
+        }
+        _ => Err(format!("Unknown tool: {tool_name}")),
+    }
+}
+
+fn build_chat_system_prompt(context_name: Option<&str>, namespace: Option<&str>) -> String {
+    let ctx_info = context_name
+        .map(|c| format!("Current cluster context: `{c}`\n"))
+        .unwrap_or_default();
+    let ns_info = namespace
+        .filter(|ns| !ns.is_empty() && *ns != "*")
+        .map(|ns| format!("Current namespace: `{ns}`\n"))
+        .unwrap_or_else(|| "Namespace: all namespaces\n".to_string());
+
+    format!(
+        "You are Kore AI, a Kubernetes cluster assistant embedded in the Kore desktop IDE. \
+         You help users understand and troubleshoot their Kubernetes clusters.\n\n\
+         {ctx_info}{ns_info}\n\
+         Guidelines:\n\
+         - Use the available tools to query live cluster data before answering.\n\
+         - Be concise but thorough. Start with a brief summary, then details.\n\
+         - Reference specific resource names and namespaces.\n\
+         - For problems, list concrete actionable suggestions.\n\
+         - If the cluster looks healthy, say so and mention what you checked.\n\
+         - Format responses in Markdown with headers for readability.\n\
+         - When listing resources, use tables or bullet points.\n\
+         - Always call tools rather than guessing — use real data."
+    )
+}
+
+/// Extract tool calls from a provider's non-streaming response body.
+fn extract_tool_calls(provider: &AIProvider, body: &serde_json::Value) -> Vec<ToolCall> {
+    match provider {
+        AIProvider::OpenAI => {
+            // OpenAI: choices[0].message.tool_calls[{id, function: {name, arguments}}]
+            body.pointer("/choices/0/message/tool_calls")
+                .and_then(|v| v.as_array())
+                .map(|calls| {
+                    calls
+                        .iter()
+                        .filter_map(|tc| {
+                            let id = tc.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                            let name = tc
+                                .pointer("/function/name")
+                                .and_then(|v| v.as_str())?
+                                .to_string();
+                            let args_str = tc
+                                .pointer("/function/arguments")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("{}");
+                            let arguments =
+                                serde_json::from_str(args_str).unwrap_or(json!({}));
+                            Some(ToolCall { id, name, arguments })
+                        })
+                        .collect()
+                })
+                .unwrap_or_default()
+        }
+        AIProvider::Ollama => {
+            // Ollama: message.tool_calls[{function: {name, arguments}}]
+            // arguments is already an object (not a JSON string)
+            body.pointer("/message/tool_calls")
+                .and_then(|v| v.as_array())
+                .map(|calls| {
+                    calls
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(i, tc)| {
+                            let name = tc
+                                .pointer("/function/name")
+                                .and_then(|v| v.as_str())?
+                                .to_string();
+                            let arguments = tc
+                                .pointer("/function/arguments")
+                                .cloned()
+                                .unwrap_or(json!({}));
+                            Some(ToolCall {
+                                id: format!("ollama-{i}"),
+                                name,
+                                arguments,
+                            })
+                        })
+                        .collect()
+                })
+                .unwrap_or_default()
+        }
+        AIProvider::Anthropic => {
+            // Anthropic: content[{type: "tool_use", id, name, input}]
+            body.get("content")
+                .and_then(|v| v.as_array())
+                .map(|blocks| {
+                    blocks
+                        .iter()
+                        .filter_map(|b| {
+                            if b.get("type").and_then(|v| v.as_str()) != Some("tool_use") {
+                                return None;
+                            }
+                            let id = b.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                            let name = b.get("name").and_then(|v| v.as_str())?.to_string();
+                            let arguments = b.get("input").cloned().unwrap_or(json!({}));
+                            Some(ToolCall { id, name, arguments })
+                        })
+                        .collect()
+                })
+                .unwrap_or_default()
+        }
+        AIProvider::ClaudeCli => vec![],
+    }
+}
+
+/// Extract text content from a provider's non-streaming response.
+fn extract_text_content(provider: &AIProvider, body: &serde_json::Value) -> String {
+    match provider {
+        AIProvider::OpenAI => body
+            .pointer("/choices/0/message/content")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+        AIProvider::Ollama => body
+            .pointer("/message/content")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+        AIProvider::Anthropic => body
+            .get("content")
+            .and_then(|v| v.as_array())
+            .map(|blocks| {
+                blocks
+                    .iter()
+                    .filter_map(|b| {
+                        if b.get("type").and_then(|v| v.as_str()) == Some("text") {
+                            b.get("text").and_then(|v| v.as_str()).map(String::from)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join("")
+            })
+            .unwrap_or_default(),
+        AIProvider::ClaudeCli => String::new(),
+    }
+}
+
+/// Make a non-streaming API call to the AI provider with tool definitions.
+async fn make_chat_api_call(
+    http: &HttpClient,
+    config: &AIConfig,
+    system_prompt: &str,
+    messages: &[serde_json::Value],
+    tools: &[serde_json::Value],
+) -> std::result::Result<serde_json::Value, Box<dyn std::error::Error + Send + Sync>> {
+    // Build full message array with system prompt for OpenAI/Ollama
+    let full_messages = {
+        let mut msgs = vec![json!({"role": "system", "content": system_prompt})];
+        msgs.extend_from_slice(messages);
+        msgs
+    };
+
+    let response = match config.provider {
+        AIProvider::OpenAI => {
+            let api_key = config.api_key.as_deref().ok_or("OpenAI API key required")?;
+            let mut req_body = json!({
+                "model": &config.model,
+                "messages": full_messages,
+            });
+            if !tools.is_empty() {
+                req_body["tools"] = json!(tools);
+            }
+            http.post("https://api.openai.com/v1/chat/completions")
+                .header("Authorization", format!("Bearer {api_key}"))
+                .header("Content-Type", "application/json")
+                .json(&req_body)
+                .send()
+                .await?
+        }
+        AIProvider::Anthropic => {
+            let api_key = config.api_key.as_deref().ok_or("Anthropic API key required")?;
+            let mut req_body = json!({
+                "model": &config.model,
+                "system": system_prompt,
+                "messages": messages,
+                "max_tokens": 4096,
+            });
+            if !tools.is_empty() {
+                req_body["tools"] = json!(tools);
+            }
+            http.post("https://api.anthropic.com/v1/messages")
+                .header("x-api-key", api_key)
+                .header("anthropic-version", "2023-06-01")
+                .header("Content-Type", "application/json")
+                .json(&req_body)
+                .send()
+                .await?
+        }
+        AIProvider::Ollama => {
+            let base = config.base_url.as_deref().unwrap_or("http://localhost:11434");
+            let mut req_body = json!({
+                "model": &config.model,
+                "messages": full_messages,
+                "stream": false,
+            });
+            if !tools.is_empty() {
+                req_body["tools"] = json!(tools);
+            }
+            http.post(format!("{base}/api/chat"))
+                .header("Content-Type", "application/json")
+                .json(&req_body)
+                .send()
+                .await?
+        }
+        AIProvider::ClaudeCli => {
+            return Err("Claude CLI does not use HTTP API".into());
+        }
+    };
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(format!("AI provider returned HTTP {status}: {body}").into());
+    }
+
+    let body: serde_json::Value = response.json().await?;
+    Ok(body)
+}
+
+/// The core tool-calling chat loop.
+async fn run_chat_loop(
+    state: &K8sState,
+    app: &AppHandle,
+    event_name: &str,
+    config: &AIConfig,
+    system_prompt: &str,
+    frontend_messages: &[ChatMessage],
+) -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let http = HttpClient::new();
+    let tools = build_tool_definitions(&config.provider);
+
+    // Build initial message array from frontend messages
+    let mut messages: Vec<serde_json::Value> = frontend_messages
+        .iter()
+        .map(|m| {
+            json!({
+                "role": &m.role,
+                "content": &m.content
+            })
+        })
+        .collect();
+
+    let max_rounds = 10;
+    for round in 0..max_rounds {
+        info!(round, provider = ?config.provider, "AI chat loop round");
+        let body = make_chat_api_call(&http, config, system_prompt, &messages, &tools).await?;
+
+        let tool_calls = extract_tool_calls(&config.provider, &body);
+        let text = extract_text_content(&config.provider, &body);
+
+        info!(
+            round,
+            tool_calls = tool_calls.len(),
+            has_text = !text.is_empty(),
+            text_len = text.len(),
+            "AI chat response parsed"
+        );
+
+        if tool_calls.is_empty() {
+            // No tool calls — stream the final text back
+            if !text.is_empty() {
+                // Send in chunks to simulate streaming for smoother UX
+                for chunk in text.as_bytes().chunks(80) {
+                    let chunk_str = String::from_utf8_lossy(chunk).to_string();
+                    app.emit(event_name, &AIStreamEvent::Chunk { content: chunk_str })?;
+                    tokio::time::sleep(tokio::time::Duration::from_millis(15)).await;
+                }
+            }
+            app.emit(event_name, &AIStreamEvent::Done)?;
+            return Ok(());
+        }
+
+        // Process tool calls
+        // Add the assistant's response with tool calls to messages
+        match config.provider {
+            AIProvider::OpenAI => {
+                let assistant_msg = body
+                    .pointer("/choices/0/message")
+                    .cloned()
+                    .unwrap_or(json!({"role": "assistant", "content": null}));
+                messages.push(assistant_msg);
+            }
+            AIProvider::Ollama => {
+                // Ollama: echo back the assistant message with tool_calls
+                let assistant_msg = body
+                    .get("message")
+                    .cloned()
+                    .unwrap_or(json!({"role": "assistant", "content": ""}));
+                messages.push(assistant_msg);
+            }
+            AIProvider::Anthropic => {
+                messages.push(json!({
+                    "role": "assistant",
+                    "content": body.get("content").cloned().unwrap_or(json!([]))
+                }));
+            }
+            AIProvider::ClaudeCli => {}
+        }
+
+        // Execute each tool call
+        for tc in &tool_calls {
+            // Emit status to frontend
+            let status_msg = format!("Querying {}...", tc.name.replace('_', " "));
+            app.emit(
+                event_name,
+                &AIStreamEvent::Status {
+                    message: status_msg,
+                },
+            )?;
+
+            let result = match execute_tool(state, &tc.name, &tc.arguments).await {
+                Ok(val) => serde_json::to_string(&val).unwrap_or_else(|_| "{}".to_string()),
+                Err(e) => format!("{{\"error\": \"{}\"}}", e.replace('"', "'")),
+            };
+
+            // Add tool result to messages
+            match config.provider {
+                AIProvider::OpenAI => {
+                    messages.push(json!({
+                        "role": "tool",
+                        "tool_call_id": &tc.id,
+                        "content": &result
+                    }));
+                }
+                AIProvider::Ollama => {
+                    // Ollama: tool results don't use tool_call_id
+                    messages.push(json!({
+                        "role": "tool",
+                        "content": &result
+                    }));
+                }
+                AIProvider::Anthropic => {
+                    messages.push(json!({
+                        "role": "user",
+                        "content": [{
+                            "type": "tool_result",
+                            "tool_use_id": &tc.id,
+                            "content": &result
+                        }]
+                    }));
+                }
+                AIProvider::ClaudeCli => {}
+            }
+        }
+    }
+
+    // Max rounds exceeded — send what we have
+    app.emit(
+        event_name,
+        &AIStreamEvent::Chunk {
+            content: "\n\n*[Reached maximum tool call rounds]*".to_string(),
+        },
+    )?;
+    app.emit(event_name, &AIStreamEvent::Done)?;
+    Ok(())
+}
+
+/// Claude CLI chat fallback — pre-gather cluster health context.
+async fn run_chat_claude_cli(
+    state: &K8sState,
+    app: &AppHandle,
+    event_name: &str,
+    config: &AIConfig,
+    system_prompt: &str,
+    frontend_messages: &[ChatMessage],
+) -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    // Pre-gather cluster health context
+    let health_context = match state.get_cluster_health().await {
+        Ok(health) => {
+            app.emit(
+                event_name,
+                &AIStreamEvent::Status {
+                    message: "Gathering cluster health...".to_string(),
+                },
+            )?;
+            serde_json::to_string_pretty(&health).unwrap_or_default()
+        }
+        Err(e) => format!("Failed to get cluster health: {e}"),
+    };
+
+    // Build the full prompt with context
+    let user_messages: Vec<String> = frontend_messages
+        .iter()
+        .filter(|m| m.role == "user")
+        .map(|m| m.content.clone())
+        .collect();
+    let last_user_msg = user_messages.last().cloned().unwrap_or_default();
+
+    let enriched_prompt = format!(
+        "{system_prompt}\n\n## Current Cluster State\n```json\n{health_context}\n```\n\n\
+         ## User Question\n{last_user_msg}"
+    );
+
+    stream_claude_cli_response(app, event_name, config, "", &enriched_prompt).await
 }
 
 // ── Implementation ───────────────────────────────────────────────────────
@@ -292,6 +1234,55 @@ impl K8sState {
                 error!(error = %e, "AI streaming failed");
                 let _ = handle.emit(
                     &evt,
+                    &AIStreamEvent::Error {
+                        message: e.to_string(),
+                    },
+                );
+            }
+        });
+
+        Ok(())
+    }
+
+    /// AI Chat — standalone cluster-wide chat with tool calling.
+    pub async fn ai_chat(
+        &self,
+        app: AppHandle,
+        config: AIConfig,
+        request: AIChatRequest,
+    ) -> Result<()> {
+        let session_id = request.session_id.clone();
+        let event_name = format!("ai-chat://{session_id}");
+
+        let context_name = self.current_context_name().await;
+        let system_prompt = build_chat_system_prompt(
+            context_name.as_deref(),
+            request.namespace.as_deref(),
+        );
+
+        info!(
+            session_id = %session_id,
+            provider = ?config.provider,
+            messages = request.messages.len(),
+            "Starting AI chat"
+        );
+
+        let state = self.clone();
+        let messages = request.messages.clone();
+
+        tauri::async_runtime::spawn(async move {
+            let result = if matches!(config.provider, AIProvider::ClaudeCli) {
+                run_chat_claude_cli(&state, &app, &event_name, &config, &system_prompt, &messages)
+                    .await
+            } else {
+                run_chat_loop(&state, &app, &event_name, &config, &system_prompt, &messages)
+                    .await
+            };
+
+            if let Err(e) = result {
+                error!(error = %e, "AI chat failed");
+                let _ = app.emit(
+                    &event_name,
                     &AIStreamEvent::Error {
                         message: e.to_string(),
                     },

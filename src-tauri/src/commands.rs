@@ -416,6 +416,16 @@ pub async fn get_cluster_health(
     state.get_cluster_health().await.map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+pub async fn get_cluster_health_multi_cluster(
+    state: State<'_, K8sState>,
+) -> std::result::Result<crate::state::dashboard::MultiClusterHealth, String> {
+    state
+        .get_cluster_health_multi_cluster()
+        .await
+        .map_err(|e| e.to_string())
+}
+
 // ── Phase 2: Event Store ──────────────────────────────────────────────
 
 #[tauri::command]
@@ -611,6 +621,19 @@ pub async fn ai_diagnose(
 ) -> std::result::Result<(), String> {
     state
         .ai_diagnose(app, config, request)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn ai_chat(
+    state: State<'_, K8sState>,
+    app: tauri::AppHandle,
+    config: crate::state::ai::AIConfig,
+    request: crate::state::ai::AIChatRequest,
+) -> std::result::Result<(), String> {
+    state
+        .ai_chat(app, config, request)
         .await
         .map_err(|e| e.to_string())
 }

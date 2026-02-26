@@ -7,6 +7,7 @@ import type { ResourceItem } from "@/lib/types";
 import { EventsTimeline } from "./events-timeline";
 import { ConfirmDialog } from "./confirm-dialog";
 import { YamlEditor } from "./yaml-editor";
+import { DescribeContent } from "./describe-content";
 import { DeploymentRollback } from "./deployment-rollback";
 import { MultiPodLogs } from "./multi-pod-logs";
 import { useToast } from "./toast";
@@ -23,18 +24,6 @@ function Kbd({ children }: { children: React.ReactNode }) {
       {children}
     </kbd>
   );
-}
-
-function highlightJson(json: string): string {
-  return json
-    .replace(/("(?:[^"\\]|\\.)*")\s*:/g, '<span class="text-accent">$1</span>:')
-    .replace(
-      /:\s*("(?:[^"\\]|\\.)*")/g,
-      (_match, value) => `: <span class="text-emerald-400">${value}</span>`,
-    )
-    .replace(/:\s*(\d+(?:\.\d+)?)\b/g, ': <span class="text-amber-400">$1</span>')
-    .replace(/:\s*(true|false)\b/g, ': <span class="text-indigo-400">$1</span>')
-    .replace(/:\s*(null)\b/g, ': <span class="text-slate-500">$1</span>');
 }
 
 export function DeploymentDetailsView({ deployment, onBack }: DeploymentDetailsViewProps) {
@@ -292,7 +281,7 @@ export function DeploymentDetailsView({ deployment, onBack }: DeploymentDetailsV
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              className="h-full overflow-auto bg-surface/30 border border-slate-800 rounded-lg m-4"
+              className="h-full bg-surface/30 border border-slate-800 rounded-lg m-4 overflow-hidden"
             >
               {loading ? (
                 <div className="p-4 space-y-3">
@@ -303,14 +292,7 @@ export function DeploymentDetailsView({ deployment, onBack }: DeploymentDetailsV
                   </div>
                 </div>
               ) : (
-                <div className="p-4 font-mono text-xs leading-relaxed">
-                  <pre
-                    className="whitespace-pre-wrap"
-                    dangerouslySetInnerHTML={{
-                      __html: highlightJson(describe || "No details available"),
-                    }}
-                  />
-                </div>
+                <DescribeContent content={describe} />
               )}
             </motion.div>
           ) : activeTab === "yaml" ? (

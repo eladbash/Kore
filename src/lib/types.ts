@@ -18,7 +18,8 @@ export type AppView =
   | "crds"
   | "helm"
   | "helm-detail"
-  | "settings";
+  | "settings"
+  | "chat";
 
 export interface ResourceItem {
   name: string;

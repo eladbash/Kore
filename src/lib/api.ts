@@ -285,6 +285,19 @@ export async function getClusterHealth(): Promise<ClusterHealth> {
   return invoke("get_cluster_health");
 }
 
+export interface ClusterHealthEntry {
+  context: string;
+  health: ClusterHealth;
+}
+
+export interface MultiClusterHealth {
+  clusters: ClusterHealthEntry[];
+}
+
+export async function getClusterHealthMultiCluster(): Promise<MultiClusterHealth> {
+  return invoke("get_cluster_health_multi_cluster");
+}
+
 // ── Phase 2: Event Store ──────────────────────────────────────────────
 
 export interface StoredEvent {
@@ -451,7 +464,7 @@ export async function listResourcesMultiCluster(
 // ── Phase 4: AI Troubleshooting ──────────────────────────────────────
 
 export interface AIConfig {
-  provider: "openai" | "anthropic" | "ollama";
+  provider: "openai" | "anthropic" | "ollama" | "claude_cli";
   api_key?: string;
   model: string;
   base_url?: string;
@@ -469,6 +482,23 @@ export async function aiDiagnose(config: AIConfig, request: DiagnoseRequest): Pr
 
 export async function aiTestConnection(config: AIConfig): Promise<boolean> {
   return invoke("ai_test_connection", { config });
+}
+
+// ── AI Chat ───────────────────────────────────────────────────────────
+
+export interface ChatMessage {
+  role: string;
+  content: string;
+}
+
+export interface AIChatRequest {
+  messages: ChatMessage[];
+  session_id: string;
+  namespace?: string;
+}
+
+export async function aiChat(config: AIConfig, request: AIChatRequest): Promise<void> {
+  return invoke("ai_chat", { config, request });
 }
 
 // ── Favorites Persistence ────────────────────────────────────────────

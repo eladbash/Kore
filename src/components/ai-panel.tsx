@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Bot, Send, X, Copy, Sparkles, Loader2, Settings2, Trash2 } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { cn } from "@/lib/utils";
 import { useToast } from "./toast";
 import { AISettings } from "./ai-settings";
@@ -382,9 +384,15 @@ export function AIPanel({ open, onClose, resourceContext }: AIPanelProps) {
                         : "bg-muted/60 text-slate-200 border border-slate-800/50 rounded-bl-sm",
                     )}
                   >
-                    <pre className="whitespace-pre-wrap font-sans text-sm break-words">
-                      {msg.content}
-                    </pre>
+                    {msg.role === "user" ? (
+                      <p className="whitespace-pre-wrap break-words">{msg.content}</p>
+                    ) : (
+                      <div className="ai-markdown">
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                          {msg.content}
+                        </ReactMarkdown>
+                      </div>
+                    )}
 
                     {/* Copy button on assistant messages */}
                     {msg.role === "assistant" && (

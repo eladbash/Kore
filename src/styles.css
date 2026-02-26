@@ -80,3 +80,123 @@ body::before {
   animation: shimmer 1.8s ease-in-out infinite;
   border-radius: 4px;
 }
+
+/* ── AI Markdown rendering ────────────────────────────────────────────── */
+
+.ai-markdown {
+  @apply text-sm leading-relaxed text-slate-200;
+}
+
+.ai-markdown > *:first-child {
+  margin-top: 0;
+}
+
+.ai-markdown > *:last-child {
+  margin-bottom: 0;
+}
+
+.ai-markdown h1 {
+  @apply text-base font-bold text-slate-100 mt-5 mb-2;
+}
+
+.ai-markdown h2 {
+  @apply text-sm font-bold text-slate-100 mt-5 mb-2;
+}
+
+.ai-markdown h3 {
+  @apply text-sm font-semibold text-slate-100 mt-4 mb-1.5;
+}
+
+.ai-markdown h4,
+.ai-markdown h5,
+.ai-markdown h6 {
+  @apply text-sm font-medium text-slate-200 mt-3 mb-1;
+}
+
+.ai-markdown p {
+  @apply my-2;
+}
+
+.ai-markdown strong {
+  @apply font-semibold text-slate-100;
+}
+
+.ai-markdown em {
+  @apply italic text-slate-300;
+}
+
+.ai-markdown a {
+  color: var(--accent);
+  @apply underline underline-offset-2;
+}
+
+.ai-markdown ul {
+  @apply my-2 ml-4 list-disc space-y-1;
+}
+
+.ai-markdown ol {
+  @apply my-2 ml-4 list-decimal space-y-1;
+}
+
+.ai-markdown li {
+  @apply text-slate-200;
+}
+
+.ai-markdown li > p {
+  @apply my-0.5;
+}
+
+.ai-markdown blockquote {
+  @apply my-3 pl-3 border-l-2 text-slate-400 italic;
+  border-left-color: color-mix(in srgb, var(--accent) 40%, transparent);
+}
+
+.ai-markdown hr {
+  @apply my-4 border-slate-700/60;
+}
+
+.ai-markdown code {
+  @apply font-mono text-[13px] px-1.5 py-0.5 rounded;
+  background: rgba(30, 41, 59, 0.8);
+  color: color-mix(in srgb, var(--accent) 90%, white);
+}
+
+.ai-markdown pre {
+  @apply my-3 rounded-lg bg-slate-900/80 border border-slate-800/60 overflow-x-auto;
+}
+
+.ai-markdown pre code {
+  @apply block px-4 py-3 bg-transparent text-slate-300 text-xs leading-relaxed;
+}
+
+.ai-markdown table {
+  @apply my-3 w-full text-xs border-collapse;
+}
+
+.ai-markdown thead {
+  @apply border-b border-slate-700;
+}
+
+.ai-markdown th {
+  @apply px-3 py-2 text-left font-semibold text-slate-300 bg-slate-800/50;
+}
+
+.ai-markdown th:first-child {
+  @apply rounded-tl-md;
+}
+
+.ai-markdown th:last-child {
+  @apply rounded-tr-md;
+}
+
+.ai-markdown td {
+  @apply px-3 py-2 text-slate-300 border-b border-slate-800/40;
+}
+
+.ai-markdown tbody tr:hover {
+  @apply bg-slate-800/20;
+}
+
+.ai-markdown img {
+  @apply my-3 rounded-lg max-w-full;
+}

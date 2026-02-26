@@ -22,6 +22,7 @@ import {
   Settings,
   Sparkles,
   Filter,
+  MessageCircle,
 } from "lucide-react";
 import { searchResources } from "@/lib/api";
 import { toResourceItem } from "@/lib/transforms";
@@ -77,6 +78,7 @@ function addRecent(kind: ResourceKind, name: string, namespace: string) {
 }
 
 const VIEW_COMMANDS: { id: AppView; label: string; icon: typeof LayoutDashboard }[] = [
+  { id: "chat", label: "AI Chat", icon: MessageCircle },
   { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
   { id: "graph", label: "Resource Graph", icon: GitBranch },
   { id: "crds", label: "Custom Resources", icon: Puzzle },

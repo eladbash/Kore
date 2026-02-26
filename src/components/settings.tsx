@@ -8,8 +8,10 @@ import {
   Clock,
   Palette,
   Globe,
+  Layout,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import type { AppView } from "@/lib/types";
 
 const SETTINGS_KEY = "kore-settings";
 
@@ -17,13 +19,21 @@ interface KoreSettings {
   eventRetention: string;
   defaultNamespaces: Record<string, string>;
   accentColor: string;
+  defaultView: AppView;
 }
 
 const DEFAULT_SETTINGS: KoreSettings = {
   eventRetention: "7d",
   defaultNamespaces: {},
   accentColor: "#58d0ff",
+  defaultView: "chat",
 };
+
+const DEFAULT_VIEW_OPTIONS: { value: AppView; label: string }[] = [
+  { value: "chat", label: "AI Chat" },
+  { value: "table", label: "Resource Table" },
+  { value: "dashboard", label: "Dashboard" },
+];
 
 const RETENTION_OPTIONS = [
   { value: "1d", label: "1 day" },
@@ -38,6 +48,7 @@ const ACCENT_PRESETS = [
   { value: "#a78bfa", label: "Violet", ring: "ring-violet-400" },
   { value: "#34d399", label: "Emerald", ring: "ring-emerald-400" },
   { value: "#fb923c", label: "Orange", ring: "ring-orange-400" },
+  { value: "#f87171", label: "Red", ring: "ring-red-400" },
 ];
 
 const SHORTCUTS = [
@@ -210,6 +221,29 @@ export function Settings({ onBack }: SettingsProps) {
           </div>
 
           <div className="space-y-4">
+            <div>
+              <label className="block text-xs text-slate-400 mb-1.5">
+                <div className="flex items-center gap-1.5">
+                  <Layout className="w-3 h-3" />
+                  Default View
+                </div>
+              </label>
+              <select
+                value={settings.defaultView}
+                onChange={(e) => updateSetting("defaultView", e.target.value as AppView)}
+                className="w-full max-w-xs px-3 py-2 bg-background border border-slate-800 rounded-md text-sm text-slate-100 outline-none focus:border-accent transition appearance-none cursor-pointer"
+              >
+                {DEFAULT_VIEW_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+              <p className="text-[10px] text-slate-500 mt-1">
+                Which view to show when the app starts.
+              </p>
+            </div>
+
             <div>
               <label className="block text-xs text-slate-400 mb-1.5">Event Retention Period</label>
               <select

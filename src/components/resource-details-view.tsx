@@ -6,6 +6,7 @@ import { formatError } from "@/lib/errors";
 import type { ResourceItem, ResourceKind } from "@/lib/types";
 import { EventsTimeline } from "./events-timeline";
 import { YamlEditor } from "./yaml-editor";
+import { DescribeContent } from "./describe-content";
 import { ConfirmDialog } from "./confirm-dialog";
 import { useToast } from "./toast";
 import { cn } from "@/lib/utils";
@@ -40,18 +41,6 @@ function DescribeSkeleton() {
       </div>
     </div>
   );
-}
-
-function highlightJson(json: string): string {
-  return json
-    .replace(/("(?:[^"\\]|\\.)*")\s*:/g, '<span class="text-accent">$1</span>:')
-    .replace(
-      /:\s*("(?:[^"\\]|\\.)*")/g,
-      (match, value) => `: <span class="text-emerald-400">${value}</span>`,
-    )
-    .replace(/:\s*(\d+(?:\.\d+)?)\b/g, ': <span class="text-amber-400">$1</span>')
-    .replace(/:\s*(true|false)\b/g, ': <span class="text-indigo-400">$1</span>')
-    .replace(/:\s*(null)\b/g, ': <span class="text-slate-500">$1</span>');
 }
 
 /** Decode base64 secret values in describe data */
@@ -262,11 +251,11 @@ export function ResourceDetailsView({ resource, kind, onBack }: ResourceDetailsV
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              className="h-full overflow-auto bg-surface/30 border border-slate-800 rounded-lg m-4"
+              className="h-full flex flex-col bg-surface/30 border border-slate-800 rounded-lg m-4 overflow-hidden"
             >
               {/* Secret key reveal toggles */}
               {kind === "secrets" && secretKeys.length > 0 && (
-                <div className="px-4 pt-3 flex flex-wrap gap-2 border-b border-slate-800/50 pb-3">
+                <div className="px-4 pt-3 flex flex-wrap gap-2 border-b border-slate-800/50 pb-3 shrink-0">
                   <span className="text-[10px] uppercase text-slate-500 self-center mr-1">
                     Reveal:
                   </span>
@@ -295,13 +284,8 @@ export function ResourceDetailsView({ resource, kind, onBack }: ResourceDetailsV
               {loading ? (
                 <DescribeSkeleton />
               ) : (
-                <div className="p-4 font-mono text-xs leading-relaxed">
-                  <pre
-                    className="whitespace-pre-wrap"
-                    dangerouslySetInnerHTML={{
-                      __html: highlightJson(describe || "No details available"),
-                    }}
-                  />
+                <div className="flex-1 min-h-0">
+                  <DescribeContent content={describe} />
                 </div>
               )}
             </motion.div>

@@ -5,6 +5,7 @@ import { getResourceYaml, applyResourceYaml, diffResourceYaml } from "@/lib/api"
 import type { DiffLine } from "@/lib/api";
 import { formatError } from "@/lib/errors";
 import { ConfirmDialog } from "./confirm-dialog";
+import { TextSearchBar } from "./text-search-bar";
 import { useToast } from "./toast";
 import { cn } from "@/lib/utils";
 
@@ -38,6 +39,46 @@ function YamlSkeleton() {
   );
 }
 
+function renderYamlHighlights(
+  text: string,
+  query: string,
+  currentIndex: number,
+  matches: number[],
+): React.ReactNode[] {
+  if (matches.length === 0) return [text];
+
+  const parts: React.ReactNode[] = [];
+  let lastEnd = 0;
+
+  matches.forEach((pos, i) => {
+    if (pos > lastEnd) {
+      parts.push(text.substring(lastEnd, pos));
+    }
+    const isCurrent = i === currentIndex;
+    parts.push(
+      <mark
+        key={i}
+        style={{
+          color: "transparent",
+          background: isCurrent ? "rgba(251,191,36,0.35)" : "rgba(251,191,36,0.15)",
+          boxShadow: isCurrent ? "0 0 0 1px rgba(251,191,36,0.5)" : "none",
+          borderRadius: "2px",
+        }}
+        data-current-match={isCurrent || undefined}
+      >
+        {text.substring(pos, pos + query.length)}
+      </mark>,
+    );
+    lastEnd = pos + query.length;
+  });
+
+  if (lastEnd < text.length) {
+    parts.push(text.substring(lastEnd));
+  }
+
+  return parts;
+}
+
 export function YamlEditor({ kind, namespace, name }: YamlEditorProps) {
   const [originalYaml, setOriginalYaml] = useState("");
   const [yaml, setYaml] = useState("");
@@ -49,15 +90,39 @@ export function YamlEditor({ kind, namespace, name }: YamlEditorProps) {
   const [diffLoading, setDiffLoading] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const lineNumbersRef = useRef<HTMLDivElement>(null);
+  const highlightOverlayRef = useRef<HTMLPreElement>(null);
   const toast = useToast();
 
+  // Search state
+  const [searchVisible, setSearchVisible] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchIndex, setSearchIndex] = useState(0);
+
   const hasChanges = yaml !== originalYaml;
+
+  // Find match positions in yaml text
+  const searchMatches = useMemo(() => {
+    if (!searchQuery) return [];
+    const matches: number[] = [];
+    const q = searchQuery.toLowerCase();
+    const text = yaml.toLowerCase();
+    let pos = 0;
+    for (;;) {
+      const idx = text.indexOf(q, pos);
+      if (idx === -1) break;
+      matches.push(idx);
+      pos = idx + 1;
+    }
+    return matches;
+  }, [yaml, searchQuery]);
 
   // Fetch YAML on mount or when resource identity changes
   useEffect(() => {
     setLoading(true);
     setDiffLines(null);
     setReadOnly(true);
+    setSearchVisible(false);
+    setSearchQuery("");
     getResourceYaml(kind, namespace, name)
       .then((data) => {
         setOriginalYaml(data);
@@ -70,12 +135,38 @@ export function YamlEditor({ kind, namespace, name }: YamlEditorProps) {
       .finally(() => setLoading(false));
   }, [kind, namespace, name]);
 
-  // Sync line number scroll with textarea
+  // Sync line number + overlay scroll with textarea
   const handleScroll = useCallback(() => {
-    if (textareaRef.current && lineNumbersRef.current) {
-      lineNumbersRef.current.scrollTop = textareaRef.current.scrollTop;
+    if (textareaRef.current) {
+      if (lineNumbersRef.current) {
+        lineNumbersRef.current.scrollTop = textareaRef.current.scrollTop;
+      }
+      if (highlightOverlayRef.current) {
+        const { scrollTop, scrollLeft } = textareaRef.current;
+        highlightOverlayRef.current.style.transform = `translate(${-scrollLeft}px, ${-scrollTop}px)`;
+      }
     }
   }, []);
+
+  // Scroll textarea to a character position
+  const scrollToPosition = useCallback(
+    (pos: number) => {
+      if (!textareaRef.current) return;
+      const ta = textareaRef.current;
+      const linesBefore = yaml.substring(0, pos).split("\n").length - 1;
+      const totalLines = Math.max(yaml.split("\n").length, 1);
+      const lineHeight = ta.scrollHeight / totalLines;
+      ta.scrollTop = Math.max(0, linesBefore * lineHeight - ta.clientHeight / 3);
+    },
+    [yaml],
+  );
+
+  // Scroll to current match when index changes
+  useEffect(() => {
+    if (searchMatches.length > 0) {
+      scrollToPosition(searchMatches[searchIndex]);
+    }
+  }, [searchIndex, searchMatches, scrollToPosition]);
 
   const lineCount = useMemo(() => {
     return yaml.split("\n").length;
@@ -152,6 +243,42 @@ export function YamlEditor({ kind, namespace, name }: YamlEditorProps) {
     },
     [yaml],
   );
+
+  // Cmd+F handler
+  useEffect(() => {
+    const handleCmdF = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "f") {
+        e.preventDefault();
+        setSearchVisible(true);
+      }
+    };
+    window.addEventListener("keydown", handleCmdF);
+    return () => window.removeEventListener("keydown", handleCmdF);
+  }, []);
+
+  // Search navigation
+  const handleSearchNext = useCallback(() => {
+    if (searchMatches.length === 0) return;
+    setSearchIndex((prev) => (prev + 1) % searchMatches.length);
+    if (diffLines) setDiffLines(null);
+  }, [searchMatches, diffLines]);
+
+  const handleSearchPrev = useCallback(() => {
+    if (searchMatches.length === 0) return;
+    setSearchIndex((prev) => (prev - 1 + searchMatches.length) % searchMatches.length);
+    if (diffLines) setDiffLines(null);
+  }, [searchMatches, diffLines]);
+
+  const handleSearchClose = useCallback(() => {
+    setSearchVisible(false);
+    setSearchQuery("");
+    setSearchIndex(0);
+  }, []);
+
+  const handleSearchQueryChange = useCallback((q: string) => {
+    setSearchQuery(q);
+    setSearchIndex(0);
+  }, []);
 
   return (
     <motion.div
@@ -235,6 +362,19 @@ export function YamlEditor({ kind, namespace, name }: YamlEditorProps) {
 
       {/* Editor / Diff view */}
       <div className="flex-1 overflow-hidden relative">
+        {/* Search bar */}
+        {searchVisible && (
+          <TextSearchBar
+            query={searchQuery}
+            onQueryChange={handleSearchQueryChange}
+            matchCount={searchMatches.length}
+            currentMatch={searchIndex}
+            onNext={handleSearchNext}
+            onPrev={handleSearchPrev}
+            onClose={handleSearchClose}
+          />
+        )}
+
         <AnimatePresence mode="wait">
           {loading ? (
             <motion.div
@@ -342,22 +482,40 @@ export function YamlEditor({ kind, namespace, name }: YamlEditorProps) {
                 ))}
               </div>
 
-              {/* Textarea */}
-              <textarea
-                ref={textareaRef}
-                value={yaml}
-                onChange={(e) => setYaml(e.target.value)}
-                onScroll={handleScroll}
-                onKeyDown={handleKeyDown}
-                readOnly={readOnly}
-                spellCheck={false}
-                className={cn(
-                  "flex-1 bg-transparent text-slate-300 font-mono text-xs leading-relaxed p-4 resize-none outline-none",
-                  "whitespace-pre overflow-auto",
-                  readOnly && "cursor-default text-slate-400",
-                  !readOnly && "caret-accent",
+              {/* Textarea with search highlight overlay */}
+              <div className="relative flex-1 overflow-hidden">
+                {/* Search highlight overlay */}
+                {searchVisible && searchQuery && searchMatches.length > 0 && (
+                  <div
+                    className="absolute inset-0 overflow-hidden pointer-events-none"
+                    aria-hidden="true"
+                  >
+                    <pre
+                      ref={highlightOverlayRef}
+                      className="font-mono text-xs leading-relaxed p-4 whitespace-pre text-transparent m-0"
+                    >
+                      {renderYamlHighlights(yaml, searchQuery, searchIndex, searchMatches)}
+                    </pre>
+                  </div>
                 )}
-              />
+
+                {/* Textarea */}
+                <textarea
+                  ref={textareaRef}
+                  value={yaml}
+                  onChange={(e) => setYaml(e.target.value)}
+                  onScroll={handleScroll}
+                  onKeyDown={handleKeyDown}
+                  readOnly={readOnly}
+                  spellCheck={false}
+                  className={cn(
+                    "absolute inset-0 w-full h-full bg-transparent text-slate-300 font-mono text-xs leading-relaxed p-4 resize-none outline-none",
+                    "whitespace-pre overflow-auto",
+                    readOnly && "cursor-default text-slate-400",
+                    !readOnly && "caret-accent",
+                  )}
+                />
+              </div>
             </motion.div>
           )}
         </AnimatePresence>

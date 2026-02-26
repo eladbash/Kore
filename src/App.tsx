@@ -14,6 +14,7 @@ import { HelmDetailView } from "./components/helm-detail-view";
 import { Settings as SettingsPage, useSettings } from "./components/settings";
 import { ShortcutOverlay } from "./components/shortcut-overlay";
 import { AIPanel } from "./components/ai-panel";
+import { AIChatView } from "./components/ai-chat-view";
 import { useK8sContext } from "./hooks/use-k8s-context";
 import { useResourceWatch } from "./hooks/use-resource-watch";
 import { useKeyboardShortcuts } from "./hooks/use-keyboard-shortcuts";
@@ -86,7 +87,18 @@ export default function App() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [selectedRowIndex, setSelectedRowIndex] = useState(-1);
-  const [viewMode, setViewMode] = useState<AppView>("table");
+  const [viewMode, setViewMode] = useState<AppView>(() => {
+    try {
+      const stored = localStorage.getItem("kore-settings");
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (parsed.defaultView) return parsed.defaultView as AppView;
+      }
+    } catch {
+      // ignore
+    }
+    return "chat";
+  });
   const [labelFilters, setLabelFilters] = useState<string[]>([]);
   const [showLabelFilter, setShowLabelFilter] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
@@ -412,8 +424,13 @@ export default function App() {
 
         <section className="overflow-hidden relative">
           <AnimatePresence mode="wait">
-            {viewMode === "dashboard" ? (
-              <ClusterDashboard key="dashboard" onNavigateToResource={handleDashboardNavigate} />
+            {viewMode === "chat" ? (
+              <AIChatView
+                key="chat"
+                namespace={namespace === "*" ? undefined : namespace}
+              />
+            ) : viewMode === "dashboard" ? (
+              <ClusterDashboard key="dashboard" onNavigateToResource={handleDashboardNavigate} multiCluster={multiCluster} />
             ) : viewMode === "graph" ? (
               <ResourceGraphView
                 key="graph"

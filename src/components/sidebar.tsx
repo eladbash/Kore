@@ -18,6 +18,7 @@ import {
   Package,
   Settings,
   Star,
+  MessageCircle,
 } from "lucide-react";
 import { motion } from "framer-motion";
 import type { ResourceKind, AppView } from "@/lib/types";
@@ -77,6 +78,7 @@ type SpecialView = {
 };
 
 const specialViews: SpecialView[] = [
+  { id: "chat", label: "AI Chat", icon: MessageCircle },
   { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
   { id: "graph", label: "Graph", icon: GitBranch },
   { id: "crds", label: "Custom Resources", icon: Puzzle },
