@@ -21,12 +21,14 @@ fn main() {
 
     tauri::Builder::default()
         .setup(|app| {
-            let state = tauri::async_runtime::block_on(K8sState::new())
-                .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+            let state = tauri::async_runtime::block_on(K8sState::new());
             app.manage(state);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            // Connection status
+            get_connection_status,
+            retry_connection,
             // Core
             list_contexts,
             list_namespaces,

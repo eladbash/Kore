@@ -12,6 +12,23 @@ pub struct LogRequest {
     pub previous: Option<bool>,
 }
 
+// ── Connection status ─────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn get_connection_status(
+    state: State<'_, K8sState>,
+) -> std::result::Result<crate::error::ConnectionStatus, String> {
+    Ok(state.get_connection_status().await)
+}
+
+#[tauri::command]
+pub async fn retry_connection(
+    state: State<'_, K8sState>,
+    context: Option<String>,
+) -> std::result::Result<crate::error::ConnectionStatus, String> {
+    Ok(state.retry_connection(context).await)
+}
+
 // ── Existing commands ──────────────────────────────────────────────────
 
 #[tauri::command]

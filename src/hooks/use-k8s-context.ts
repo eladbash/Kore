@@ -1,5 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
-import { listContexts, listNamespaces, switchContext, loadFavorites } from "@/lib/api";
+import {
+  listContexts,
+  listNamespaces,
+  switchContext,
+  loadFavorites,
+  getConnectionStatus,
+  retryConnection,
+} from "@/lib/api";
+import type { ConnectionStatus } from "@/lib/types";
 
 const DEFAULT_NAMESPACES = ["default", "kube-system", "kube-public", "kube-node-lease"];
 
@@ -11,6 +19,7 @@ export function useK8sContext() {
   const [currentContext, setCurrentContext] = useState<string>();
   const [namespaces, setNamespaces] = useState<string[]>(DEFAULT_NAMESPACES);
   const [namespace, setNamespace] = useState<string>("default");
+  const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus | null>(null);
 
   const handleContextChange = useCallback(async (newContext: string) => {
     setNamespaces([]);
@@ -18,16 +27,53 @@ export function useK8sContext() {
     try {
       await switchContext(newContext);
       setCurrentContext(newContext);
+      // Update connection status on successful switch
+      const status = await getConnectionStatus();
+      setConnectionStatus(status);
     } catch (err) {
       console.error("Failed to switch context", err);
+      // Refresh connection status to reflect the error
+      try {
+        const status = await getConnectionStatus();
+        setConnectionStatus(status);
+      } catch {
+        // ignore
+      }
     }
   }, []);
 
-  // Load contexts on mount
+  const handleRetryConnection = useCallback(async (context?: string) => {
+    const status = await retryConnection(context);
+    setConnectionStatus(status);
+    if (status.connected) {
+      // Re-read contexts and set current
+      if (status.contexts_available.length > 0) {
+        setContexts(status.contexts_available);
+      }
+      if (status.current_context) {
+        setCurrentContext(status.current_context);
+      }
+    }
+    return status;
+  }, []);
+
+  // Load connection status and contexts on mount
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
+        const status = await getConnectionStatus();
+        if (cancelled) return;
+        setConnectionStatus(status);
+
+        if (!status.connected) {
+          // Still populate contexts if kubeconfig was readable
+          if (status.contexts_available.length > 0) {
+            setContexts(status.contexts_available);
+          }
+          return;
+        }
+
         const ctxs = await listContexts();
         if (cancelled) return;
         if (ctxs && ctxs.length > 0) {
@@ -126,5 +172,7 @@ export function useK8sContext() {
     setNamespace,
     handleContextChange,
     refreshNamespaces,
+    connectionStatus,
+    handleRetryConnection,
   };
 }

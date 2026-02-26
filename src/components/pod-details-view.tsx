@@ -777,11 +777,7 @@ export function PodDetailsView({ pod, onBack }: PodDetailsViewProps) {
                   exit={{ opacity: 0 }}
                   className="h-full bg-surface/30 border border-slate-800 rounded-lg m-4 overflow-hidden"
                 >
-                  {loading ? (
-                    <DescribeSkeleton />
-                  ) : (
-                    <DescribeContent content={describe} />
-                  )}
+                  {loading ? <DescribeSkeleton /> : <DescribeContent content={describe} />}
                 </motion.div>
               ) : activeTab === "yaml" ? (
                 <motion.div

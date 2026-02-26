@@ -361,9 +361,7 @@ export function AIChatView({ namespace }: AIChatViewProps) {
                     <p className="whitespace-pre-wrap break-words">{msg.content}</p>
                   ) : (
                     <div className="ai-markdown">
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                        {msg.content}
-                      </ReactMarkdown>
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
                     </div>
                   )}
 

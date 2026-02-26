@@ -15,7 +15,7 @@ pub mod rollback;
 pub mod watcher;
 pub mod yaml;
 
-use crate::error::{K8sError, Result};
+use crate::error::{classify_connection_error, ConnectionStatus, K8sError, Result};
 use kube::{
     config::{KubeConfigOptions, Kubeconfig},
     Client, Config,
@@ -57,6 +57,7 @@ pub(crate) struct StateInner {
     pub client: Option<Client>,
     pub kubeconfig: Option<Kubeconfig>,
     pub current_context: Option<String>,
+    pub connection_error: Option<K8sError>,
 }
 
 #[derive(Clone)]
@@ -70,15 +71,10 @@ pub struct K8sState {
 }
 
 impl K8sState {
-    pub async fn new() -> Result<Self> {
-        let kubeconfig = Kubeconfig::read()?;
-        let ctx_name = kubeconfig
-            .current_context
-            .clone()
-            .or_else(|| kubeconfig.contexts.first().map(|c| c.name.clone()));
-        let client = Self::client_for_context(&kubeconfig, ctx_name.clone()).await?;
-
-        // Initialize event store
+    /// Initialize state. Always succeeds — stores connection errors internally
+    /// so the frontend can display them instead of crashing.
+    pub async fn new() -> Self {
+        // Initialize event store (independent of kubeconfig)
         let event_store = dirs::data_dir()
             .map(|d| d.join("kore"))
             .and_then(|data_dir| {
@@ -90,20 +86,43 @@ impl K8sState {
                     .ok()
             });
 
-        info!(context = ?ctx_name, "Initialized K8sState");
+        // Try to read kubeconfig and connect
+        let (client, kubeconfig, ctx_name, connection_error) = match Kubeconfig::read() {
+            Ok(kc) => {
+                let ctx = kc
+                    .current_context
+                    .clone()
+                    .or_else(|| kc.contexts.first().map(|c| c.name.clone()));
+                match Self::client_for_context(&kc, ctx.clone()).await {
+                    Ok(c) => {
+                        info!(context = ?ctx, "Initialized K8sState");
+                        (Some(c), Some(kc), ctx, None)
+                    }
+                    Err(e) => {
+                        warn!(error = %e, "Failed to create Kubernetes client");
+                        (None, Some(kc), ctx, Some(e))
+                    }
+                }
+            }
+            Err(e) => {
+                warn!(error = %e, "Failed to read kubeconfig");
+                (None, None, None, Some(K8sError::Kubeconfig(e)))
+            }
+        };
 
-        Ok(Self {
+        Self {
             inner: Arc::new(RwLock::new(StateInner {
-                client: Some(client),
-                kubeconfig: Some(kubeconfig),
+                client,
+                kubeconfig,
                 current_context: ctx_name,
+                connection_error,
             })),
             watcher: WatchManager::new(),
             logs: LogStreamer::new(),
             port_forwards: PortForwardManager::new(),
             exec_sessions: ExecManager::new(),
             event_store,
-        })
+        }
     }
 
     pub(crate) async fn client_for_context(
@@ -123,10 +142,97 @@ impl K8sState {
         Ok(cfg)
     }
 
+    pub async fn get_connection_status(&self) -> ConnectionStatus {
+        let inner = self.inner.read().await;
+
+        let kubeconfig_path = std::env::var("KUBECONFIG")
+            .ok()
+            .or_else(|| dirs::home_dir().map(|h| h.join(".kube/config").to_string_lossy().into_owned()));
+
+        let contexts_available: Vec<String> = inner
+            .kubeconfig
+            .as_ref()
+            .map(|kc| kc.contexts.iter().map(|c| c.name.clone()).collect())
+            .unwrap_or_default();
+
+        match &inner.connection_error {
+            None if inner.client.is_some() => ConnectionStatus {
+                connected: true,
+                error: None,
+                error_kind: None,
+                kubeconfig_path,
+                contexts_available,
+                current_context: inner.current_context.clone(),
+            },
+            Some(err) => ConnectionStatus {
+                connected: false,
+                error: Some(err.to_string()),
+                error_kind: Some(classify_connection_error(err).to_string()),
+                kubeconfig_path,
+                contexts_available,
+                current_context: inner.current_context.clone(),
+            },
+            None => ConnectionStatus {
+                connected: false,
+                error: Some("Client not initialized".to_string()),
+                error_kind: Some("unknown".to_string()),
+                kubeconfig_path,
+                contexts_available,
+                current_context: inner.current_context.clone(),
+            },
+        }
+    }
+
+    pub async fn retry_connection(&self, context: Option<String>) -> ConnectionStatus {
+        // Cancel any active operations first
+        self.watcher.cancel_all().await;
+        self.logs.cancel().await;
+        self.exec_sessions.cancel_all().await;
+
+        let result = match Kubeconfig::read() {
+            Ok(kc) => {
+                let ctx = context
+                    .or_else(|| kc.current_context.clone())
+                    .or_else(|| kc.contexts.first().map(|c| c.name.clone()));
+                match Self::client_for_context(&kc, ctx.clone()).await {
+                    Ok(c) => {
+                        info!(context = ?ctx, "Reconnected successfully");
+                        (Some(c), Some(kc), ctx, None)
+                    }
+                    Err(e) => {
+                        warn!(error = %e, "Retry: failed to create client");
+                        (None, Some(kc), ctx, Some(e))
+                    }
+                }
+            }
+            Err(e) => {
+                warn!(error = %e, "Retry: failed to read kubeconfig");
+                (None, None, None, Some(K8sError::Kubeconfig(e)))
+            }
+        };
+
+        let mut inner = self.inner.write().await;
+        inner.client = result.0;
+        inner.kubeconfig = result.1;
+        inner.current_context = result.2;
+        inner.connection_error = result.3;
+        drop(inner);
+
+        self.get_connection_status().await
+    }
+
     pub async fn list_contexts(&self) -> Result<Vec<String>> {
         let inner = self.inner.read().await;
-        let kubeconfig = inner.kubeconfig.clone().ok_or(K8sError::ClientMissing)?;
-        Ok(kubeconfig.contexts.iter().map(|c| c.name.clone()).collect())
+        // Try stored kubeconfig first
+        if let Some(kc) = &inner.kubeconfig {
+            return Ok(kc.contexts.iter().map(|c| c.name.clone()).collect());
+        }
+        drop(inner);
+        // Fallback: try reading kubeconfig fresh (may have been fixed since startup)
+        match Kubeconfig::read() {
+            Ok(kc) => Ok(kc.contexts.iter().map(|c| c.name.clone()).collect()),
+            Err(_) => Ok(vec![]),
+        }
     }
 
     pub async fn list_namespaces(&self) -> Result<Vec<String>> {

@@ -333,9 +333,7 @@ function HealthCards({
                   <span className="font-mono text-slate-300 truncate group-hover:text-accent transition-colors">
                     {pod.name}
                   </span>
-                  <span className="text-slate-600 text-[10px] ml-2 flex-shrink-0">
-                    {pod.age}
-                  </span>
+                  <span className="text-slate-600 text-[10px] ml-2 flex-shrink-0">{pod.age}</span>
                 </div>
                 <div className="flex items-center gap-1 mt-0.5">
                   <span className="text-amber-400/70 text-[10px] truncate">
@@ -352,11 +350,7 @@ function HealthCards({
       </DashboardCard>
 
       {/* ── Recent Warnings ──────────────────────────────────────── */}
-      <DashboardCard
-        title="Recent Warnings"
-        icon={Skull}
-        className="md:col-span-2 xl:col-span-1"
-      >
+      <DashboardCard title="Recent Warnings" icon={Skull} className="md:col-span-2 xl:col-span-1">
         {health.recent_warnings.length === 0 ? (
           <div className="flex items-center justify-center h-full text-slate-500 text-sm">
             No recent warnings
@@ -377,9 +371,7 @@ function HealthCards({
                     </span>
                   )}
                 </div>
-                <p className="text-slate-400 mt-0.5 line-clamp-2 leading-relaxed">
-                  {evt.message}
-                </p>
+                <p className="text-slate-400 mt-0.5 line-clamp-2 leading-relaxed">{evt.message}</p>
                 <div className="flex items-center justify-between mt-1 text-[10px] text-slate-600">
                   <span className="truncate max-w-[60%]">{evt.involved_object}</span>
                   <span>{evt.last_seen}</span>
@@ -502,10 +494,7 @@ export function ClusterDashboard({ onNavigateToResource, multiCluster }: Cluster
                   </span>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 auto-rows-min">
-                  <HealthCards
-                    health={entry.health}
-                    onNavigateToResource={onNavigateToResource}
-                  />
+                  <HealthCards health={entry.health} onNavigateToResource={onNavigateToResource} />
                 </div>
               </div>
             ))}

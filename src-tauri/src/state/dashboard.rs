@@ -310,9 +310,8 @@ pub fn compute_health(
     let pending_penalty = (pending as f64 * 2.0).min(10.0);
     let warning_penalty = (recent_warnings.len() as f64 * 0.5).min(5.0);
 
-    let score =
-        (node_score + pod_score + 30.0 - crash_penalty - pending_penalty - warning_penalty)
-            .clamp(0.0, 100.0) as u32;
+    let score = (node_score + pod_score + 30.0 - crash_penalty - pending_penalty - warning_penalty)
+        .clamp(0.0, 100.0) as u32;
 
     ClusterHealth {
         score,

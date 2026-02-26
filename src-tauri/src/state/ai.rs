@@ -368,7 +368,10 @@ fn summarize_resources(kind: &str, resources: &[serde_json::Value]) -> serde_jso
         .iter()
         .take(100) // cap at 100
         .map(|r| {
-            let name = r.pointer("/metadata/name").and_then(|v| v.as_str()).unwrap_or("");
+            let name = r
+                .pointer("/metadata/name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             let namespace = r
                 .pointer("/metadata/namespace")
                 .and_then(|v| v.as_str())
@@ -389,7 +392,9 @@ fn summarize_resources(kind: &str, resources: &[serde_json::Value]) -> serde_jso
                         .and_then(|v| v.as_array())
                         .map(|cs| {
                             cs.iter()
-                                .map(|c| c.get("restartCount").and_then(|v| v.as_i64()).unwrap_or(0))
+                                .map(|c| {
+                                    c.get("restartCount").and_then(|v| v.as_i64()).unwrap_or(0)
+                                })
                                 .sum()
                         })
                         .unwrap_or(0);
@@ -400,7 +405,9 @@ fn summarize_resources(kind: &str, resources: &[serde_json::Value]) -> serde_jso
                             let total = cs.len();
                             let rdy = cs
                                 .iter()
-                                .filter(|c| c.get("ready").and_then(|v| v.as_bool()).unwrap_or(false))
+                                .filter(|c| {
+                                    c.get("ready").and_then(|v| v.as_bool()).unwrap_or(false)
+                                })
                                 .count();
                             format!("{rdy}/{total}")
                         })
@@ -412,9 +419,14 @@ fn summarize_resources(kind: &str, resources: &[serde_json::Value]) -> serde_jso
 
                     // Detect issues
                     let mut issues = Vec::new();
-                    if let Some(cs) = r.pointer("/status/containerStatuses").and_then(|v| v.as_array()) {
+                    if let Some(cs) = r
+                        .pointer("/status/containerStatuses")
+                        .and_then(|v| v.as_array())
+                    {
                         for c in cs {
-                            if let Some(waiting) = c.pointer("/state/waiting/reason").and_then(|v| v.as_str()) {
+                            if let Some(waiting) =
+                                c.pointer("/state/waiting/reason").and_then(|v| v.as_str())
+                            {
                                 issues.push(waiting.to_string());
                             }
                         }
@@ -427,7 +439,10 @@ fn summarize_resources(kind: &str, resources: &[serde_json::Value]) -> serde_jso
                     })
                 }
                 "deployments" => {
-                    let desired = r.pointer("/spec/replicas").and_then(|v| v.as_i64()).unwrap_or(0);
+                    let desired = r
+                        .pointer("/spec/replicas")
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(0);
                     let ready = r
                         .pointer("/status/readyReplicas")
                         .and_then(|v| v.as_i64())
@@ -458,10 +473,8 @@ fn summarize_resources(kind: &str, resources: &[serde_json::Value]) -> serde_jso
                             ps.iter()
                                 .map(|p| {
                                     let port = p.get("port").and_then(|v| v.as_i64()).unwrap_or(0);
-                                    let proto = p
-                                        .get("protocol")
-                                        .and_then(|v| v.as_str())
-                                        .unwrap_or("TCP");
+                                    let proto =
+                                        p.get("protocol").and_then(|v| v.as_str()).unwrap_or("TCP");
                                     format!("{port}/{proto}")
                                 })
                                 .collect()
@@ -478,9 +491,9 @@ fn summarize_resources(kind: &str, resources: &[serde_json::Value]) -> serde_jso
                         .pointer("/status/conditions")
                         .and_then(|v| v.as_array())
                         .and_then(|conds| {
-                            conds.iter().find(|c| {
-                                c.get("type").and_then(|v| v.as_str()) == Some("Ready")
-                            })
+                            conds
+                                .iter()
+                                .find(|c| c.get("type").and_then(|v| v.as_str()) == Some("Ready"))
                         })
                         .and_then(|c| c.get("status").and_then(|v| v.as_str()))
                         .map(|s| if s == "True" { "Ready" } else { "NotReady" })
@@ -546,7 +559,10 @@ async fn execute_tool(
                 .unwrap_or("pods");
             let rk = parse_resource_kind(kind_str)
                 .ok_or_else(|| format!("Unknown resource kind: {kind_str}"))?;
-            let namespace = arguments.get("namespace").and_then(|v| v.as_str()).map(String::from);
+            let namespace = arguments
+                .get("namespace")
+                .and_then(|v| v.as_str())
+                .map(String::from);
             let label_selector = arguments
                 .get("label_selector")
                 .and_then(|v| v.as_str())
@@ -558,7 +574,10 @@ async fn execute_tool(
             Ok(summarize_resources(kind_str, &resources))
         }
         "get_cluster_health" => {
-            let health = state.get_cluster_health().await.map_err(|e| e.to_string())?;
+            let health = state
+                .get_cluster_health()
+                .await
+                .map_err(|e| e.to_string())?;
             serde_json::to_value(health).map_err(|e| e.to_string())
         }
         "describe_resource" => {
@@ -642,7 +661,10 @@ async fn execute_tool(
                 .get("tail_lines")
                 .and_then(|v| v.as_i64())
                 .or(Some(100));
-            let container = arguments.get("container").and_then(|v| v.as_str()).map(String::from);
+            let container = arguments
+                .get("container")
+                .and_then(|v| v.as_str())
+                .map(String::from);
             let logs = state
                 .fetch_logs(namespace, pod, container, tail_lines, false)
                 .await
@@ -678,7 +700,10 @@ async fn execute_tool(
                 .and_then(|v| v.as_str())
                 .ok_or("query is required")?
                 .to_string();
-            let namespace = arguments.get("namespace").and_then(|v| v.as_str()).map(String::from);
+            let namespace = arguments
+                .get("namespace")
+                .and_then(|v| v.as_str())
+                .map(String::from);
             let results = state
                 .search_resources(query, namespace)
                 .await
@@ -687,7 +712,10 @@ async fn execute_tool(
                 .iter()
                 .take(50)
                 .map(|r| {
-                    let name = r.pointer("/metadata/name").and_then(|v| v.as_str()).unwrap_or("");
+                    let name = r
+                        .pointer("/metadata/name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
                     let ns = r
                         .pointer("/metadata/namespace")
                         .and_then(|v| v.as_str())
@@ -742,7 +770,11 @@ fn extract_tool_calls(provider: &AIProvider, body: &serde_json::Value) -> Vec<To
                     calls
                         .iter()
                         .filter_map(|tc| {
-                            let id = tc.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                            let id = tc
+                                .get("id")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_string();
                             let name = tc
                                 .pointer("/function/name")
                                 .and_then(|v| v.as_str())?
@@ -751,9 +783,12 @@ fn extract_tool_calls(provider: &AIProvider, body: &serde_json::Value) -> Vec<To
                                 .pointer("/function/arguments")
                                 .and_then(|v| v.as_str())
                                 .unwrap_or("{}");
-                            let arguments =
-                                serde_json::from_str(args_str).unwrap_or(json!({}));
-                            Some(ToolCall { id, name, arguments })
+                            let arguments = serde_json::from_str(args_str).unwrap_or(json!({}));
+                            Some(ToolCall {
+                                id,
+                                name,
+                                arguments,
+                            })
                         })
                         .collect()
                 })
@@ -798,10 +833,18 @@ fn extract_tool_calls(provider: &AIProvider, body: &serde_json::Value) -> Vec<To
                             if b.get("type").and_then(|v| v.as_str()) != Some("tool_use") {
                                 return None;
                             }
-                            let id = b.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                            let id = b
+                                .get("id")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_string();
                             let name = b.get("name").and_then(|v| v.as_str())?.to_string();
                             let arguments = b.get("input").cloned().unwrap_or(json!({}));
-                            Some(ToolCall { id, name, arguments })
+                            Some(ToolCall {
+                                id,
+                                name,
+                                arguments,
+                            })
                         })
                         .collect()
                 })
@@ -878,7 +921,10 @@ async fn make_chat_api_call(
                 .await?
         }
         AIProvider::Anthropic => {
-            let api_key = config.api_key.as_deref().ok_or("Anthropic API key required")?;
+            let api_key = config
+                .api_key
+                .as_deref()
+                .ok_or("Anthropic API key required")?;
             let mut req_body = json!({
                 "model": &config.model,
                 "system": system_prompt,
@@ -897,7 +943,10 @@ async fn make_chat_api_call(
                 .await?
         }
         AIProvider::Ollama => {
-            let base = config.base_url.as_deref().unwrap_or("http://localhost:11434");
+            let base = config
+                .base_url
+                .as_deref()
+                .unwrap_or("http://localhost:11434");
             let mut req_body = json!({
                 "model": &config.model,
                 "messages": full_messages,
@@ -1255,10 +1304,8 @@ impl K8sState {
         let event_name = format!("ai-chat://{session_id}");
 
         let context_name = self.current_context_name().await;
-        let system_prompt = build_chat_system_prompt(
-            context_name.as_deref(),
-            request.namespace.as_deref(),
-        );
+        let system_prompt =
+            build_chat_system_prompt(context_name.as_deref(), request.namespace.as_deref());
 
         info!(
             session_id = %session_id,
@@ -1272,11 +1319,25 @@ impl K8sState {
 
         tauri::async_runtime::spawn(async move {
             let result = if matches!(config.provider, AIProvider::ClaudeCli) {
-                run_chat_claude_cli(&state, &app, &event_name, &config, &system_prompt, &messages)
-                    .await
+                run_chat_claude_cli(
+                    &state,
+                    &app,
+                    &event_name,
+                    &config,
+                    &system_prompt,
+                    &messages,
+                )
+                .await
             } else {
-                run_chat_loop(&state, &app, &event_name, &config, &system_prompt, &messages)
-                    .await
+                run_chat_loop(
+                    &state,
+                    &app,
+                    &event_name,
+                    &config,
+                    &system_prompt,
+                    &messages,
+                )
+                .await
             };
 
             if let Err(e) = result {

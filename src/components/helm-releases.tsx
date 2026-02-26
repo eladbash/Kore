@@ -340,9 +340,7 @@ export function HelmReleases({ namespace, onSelectRelease }: HelmReleasesProps) 
               aria-selected={index === selectedIndex}
               className={cn(
                 "transition-colors cursor-pointer",
-                index === selectedIndex
-                  ? "bg-slate-700/60"
-                  : "hover:bg-muted/30",
+                index === selectedIndex ? "bg-slate-700/60" : "hover:bg-muted/30",
               )}
               onClick={() => {
                 setSelectedIndex(index);
@@ -353,10 +351,13 @@ export function HelmReleases({ namespace, onSelectRelease }: HelmReleasesProps) 
               }}
             >
               {row.getVisibleCells().map((cell) => (
-                <td key={cell.id} className={cn(
-                  "px-3 py-2 text-xs",
-                  index === selectedIndex ? "text-white" : "text-slate-100",
-                )}>
+                <td
+                  key={cell.id}
+                  className={cn(
+                    "px-3 py-2 text-xs",
+                    index === selectedIndex ? "text-white" : "text-slate-100",
+                  )}
+                >
                   {flexRender(cell.column.columnDef.cell, cell.getContext())}
                 </td>
               ))}

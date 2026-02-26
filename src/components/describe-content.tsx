@@ -114,7 +114,10 @@ export function DescribeContent({ content }: DescribeContentProps) {
           onClose={handleClose}
         />
       )}
-      <div ref={containerRef} className="h-full overflow-auto p-4 font-mono text-xs leading-relaxed">
+      <div
+        ref={containerRef}
+        className="h-full overflow-auto p-4 font-mono text-xs leading-relaxed"
+      >
         <pre
           className="whitespace-pre-wrap"
           dangerouslySetInnerHTML={{ __html: highlightedHtml }}

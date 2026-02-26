@@ -1,3 +1,4 @@
+use serde::Serialize;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -22,6 +23,36 @@ pub enum K8sError {
 }
 
 pub type Result<T> = std::result::Result<T, K8sError>;
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ConnectionStatus {
+    pub connected: bool,
+    pub error: Option<String>,
+    pub error_kind: Option<String>,
+    pub kubeconfig_path: Option<String>,
+    pub contexts_available: Vec<String>,
+    pub current_context: Option<String>,
+}
+
+/// Classify an error string into a category for the frontend.
+pub fn classify_connection_error(err: &K8sError) -> &'static str {
+    match err {
+        K8sError::Kubeconfig(_) => "no_kubeconfig",
+        K8sError::Kube(e) => {
+            let msg = e.to_string().to_lowercase();
+            if msg.contains("unauthorized")
+                || msg.contains("forbidden")
+                || msg.contains("401")
+                || msg.contains("403")
+            {
+                "auth_failed"
+            } else {
+                "cluster_unreachable"
+            }
+        }
+        _ => "unknown",
+    }
+}
 
 #[cfg(test)]
 mod tests {
