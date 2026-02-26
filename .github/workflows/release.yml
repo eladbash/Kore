@@ -42,14 +42,26 @@ jobs:
       - run: npm run build
 
       - name: Build and sign macOS app
+        timeout-minutes: 20
         run: npx tauri build --target ${{ matrix.target }} --bundles dmg
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+      - name: Notarize
+        timeout-minutes: 10
+        run: |
+          APP_PATH="target/${{ matrix.target }}/release/bundle/macos/kore.app"
+          ZIP_PATH="/tmp/kore-notarize.zip"
+          ditto -c -k --keepParent "$APP_PATH" "$ZIP_PATH"
+          xcrun notarytool submit "$ZIP_PATH" \
+            --apple-id "${{ secrets.APPLE_ID }}" \
+            --password "${{ secrets.APPLE_PASSWORD }}" \
+            --team-id "${{ secrets.APPLE_TEAM_ID }}" \
+            --wait --timeout 600 \
+            --verbose 2>&1
+          xcrun stapler staple "$APP_PATH"
 
       - uses: softprops/action-gh-release@v2
         with:
