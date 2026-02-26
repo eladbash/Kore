@@ -126,7 +126,13 @@ export interface NodeInfo {
 export interface ConnectionStatus {
   connected: boolean;
   error: string | null;
-  error_kind: "no_kubeconfig" | "invalid_context" | "cluster_unreachable" | "auth_failed" | "unknown" | null;
+  error_kind:
+    | "no_kubeconfig"
+    | "invalid_context"
+    | "cluster_unreachable"
+    | "auth_failed"
+    | "unknown"
+    | null;
   kubeconfig_path: string | null;
   contexts_available: string[];
   current_context: string | null;

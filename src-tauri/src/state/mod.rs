@@ -145,9 +145,9 @@ impl K8sState {
     pub async fn get_connection_status(&self) -> ConnectionStatus {
         let inner = self.inner.read().await;
 
-        let kubeconfig_path = std::env::var("KUBECONFIG")
-            .ok()
-            .or_else(|| dirs::home_dir().map(|h| h.join(".kube/config").to_string_lossy().into_owned()));
+        let kubeconfig_path = std::env::var("KUBECONFIG").ok().or_else(|| {
+            dirs::home_dir().map(|h| h.join(".kube/config").to_string_lossy().into_owned())
+        });
 
         let contexts_available: Vec<String> = inner
             .kubeconfig

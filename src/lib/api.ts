@@ -1,7 +1,13 @@
 import { invoke } from "@tauri-apps/api/core";
 
 // Re-export types from centralized types module
-export type { ResourceKind, ResourceItem, WatchEventPayload, KubernetesObject, ConnectionStatus } from "./types";
+export type {
+  ResourceKind,
+  ResourceItem,
+  WatchEventPayload,
+  KubernetesObject,
+  ConnectionStatus,
+} from "./types";
 
 // ── Connection Status ─────────────────────────────────────────────────
 
@@ -9,7 +15,9 @@ export async function getConnectionStatus(): Promise<import("./types").Connectio
   return invoke("get_connection_status");
 }
 
-export async function retryConnection(context?: string): Promise<import("./types").ConnectionStatus> {
+export async function retryConnection(
+  context?: string,
+): Promise<import("./types").ConnectionStatus> {
   return invoke("retry_connection", { context: context ?? null });
 }
 
