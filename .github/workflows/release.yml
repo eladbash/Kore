@@ -43,25 +43,18 @@ jobs:
 
       - name: Build and sign macOS app
         timeout-minutes: 20
-        run: npx tauri build --target ${{ matrix.target }} --bundles dmg
+        run: npx tauri build --target ${{ matrix.target }} --bundles app
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
 
-      - name: Find app bundle
-        run: |
-          echo "Looking for .app bundle:"
-          find . -name "kore.app" -type d 2>/dev/null
-          echo "---"
-          echo "Looking for DMG:"
-          find . -name "*.dmg" -type f 2>/dev/null
-
       - name: Notarize
         timeout-minutes: 10
         run: |
-          APP_PATH=$(find . -name "kore.app" -type d | head -1)
+          APP_PATH="src-tauri/target/${{ matrix.target }}/release/bundle/macos/kore.app"
           echo "Found app at: $APP_PATH"
+          ls -la "$APP_PATH" || { echo "Trying without src-tauri prefix..."; APP_PATH="target/${{ matrix.target }}/release/bundle/macos/kore.app"; ls -la "$APP_PATH"; }
           ZIP_PATH="/tmp/kore-notarize.zip"
           ditto -c -k --keepParent "$APP_PATH" "$ZIP_PATH"
           xcrun notarytool submit "$ZIP_PATH" \
@@ -72,13 +65,20 @@ jobs:
             --verbose 2>&1
           xcrun stapler staple "$APP_PATH"
 
+      - name: Create DMG
+        run: |
+          APP_DIR="src-tauri/target/${{ matrix.target }}/release/bundle/macos"
+          DMG_DIR="src-tauri/target/${{ matrix.target }}/release/bundle/dmg"
+          mkdir -p "$DMG_DIR"
+          hdiutil create -volname "Kore" -srcfolder "$APP_DIR/kore.app" -ov -format UDZO "$DMG_DIR/kore_$(echo ${{ matrix.target }} | sed 's/-apple-darwin//').dmg"
+
       - uses: softprops/action-gh-release@v2
         with:
           draft: true
           name: "Kore ${{ github.ref_name }}"
           body: "See the assets below to download and install Kore."
           files: |
-            target/${{ matrix.target }}/release/bundle/dmg/*.dmg
+            src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
