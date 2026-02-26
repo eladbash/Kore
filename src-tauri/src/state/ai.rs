@@ -189,7 +189,7 @@ fn build_user_message(
 // ── Tool Definitions ────────────────────────────────────────────────────
 
 fn build_tool_definitions(provider: &AIProvider) -> Vec<serde_json::Value> {
-    let tools = vec![
+    let tools = [
         json!({
             "name": "list_resources",
             "description": "List Kubernetes resources of a given kind. Returns summarized fields for each resource.",
