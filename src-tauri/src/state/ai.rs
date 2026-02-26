@@ -18,6 +18,8 @@ pub enum AIProvider {
     Ollama,
     #[serde(rename = "claude_cli")]
     ClaudeCli,
+    #[serde(rename = "cursor_agent")]
+    CursorAgent,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -73,6 +75,29 @@ struct ToolCall {
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────
+
+/// Strip ANSI escape sequences from a string (e.g. color codes, cursor movement).
+fn strip_ansi_codes(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\x1b' {
+            if chars.peek() == Some(&'[') {
+                chars.next(); // consume '['
+                // Consume until we hit a letter (the terminator)
+                while let Some(&next) = chars.peek() {
+                    chars.next();
+                    if next.is_ascii_alphabetic() {
+                        break;
+                    }
+                }
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
 
 /// Map a string kind (from the frontend) to `ResourceKind`.
 fn parse_resource_kind(kind: &str) -> Option<ResourceKind> {
@@ -358,7 +383,7 @@ fn build_tool_definitions(provider: &AIProvider) -> Vec<serde_json::Value> {
                 })
             })
             .collect(),
-        AIProvider::ClaudeCli => vec![], // not used
+        AIProvider::ClaudeCli | AIProvider::CursorAgent => vec![],
     }
 }
 
@@ -850,7 +875,7 @@ fn extract_tool_calls(provider: &AIProvider, body: &serde_json::Value) -> Vec<To
                 })
                 .unwrap_or_default()
         }
-        AIProvider::ClaudeCli => vec![],
+        AIProvider::ClaudeCli | AIProvider::CursorAgent => vec![],
     }
 }
 
@@ -884,7 +909,7 @@ fn extract_text_content(provider: &AIProvider, body: &serde_json::Value) -> Stri
                     .join("")
             })
             .unwrap_or_default(),
-        AIProvider::ClaudeCli => String::new(),
+        AIProvider::ClaudeCli | AIProvider::CursorAgent => String::new(),
     }
 }
 
@@ -963,6 +988,9 @@ async fn make_chat_api_call(
         }
         AIProvider::ClaudeCli => {
             return Err("Claude CLI does not use HTTP API".into());
+        }
+        AIProvider::CursorAgent => {
+            return Err("Cursor Agent does not use HTTP API".into());
         }
     };
 
@@ -1053,7 +1081,7 @@ async fn run_chat_loop(
                     "content": body.get("content").cloned().unwrap_or(json!([]))
                 }));
             }
-            AIProvider::ClaudeCli => {}
+            AIProvider::ClaudeCli | AIProvider::CursorAgent => {}
         }
 
         // Execute each tool call
@@ -1098,7 +1126,7 @@ async fn run_chat_loop(
                         }]
                     }));
                 }
-                AIProvider::ClaudeCli => {}
+                AIProvider::ClaudeCli | AIProvider::CursorAgent => {}
             }
         }
     }
@@ -1328,6 +1356,16 @@ impl K8sState {
                     &messages,
                 )
                 .await
+            } else if matches!(config.provider, AIProvider::CursorAgent) {
+                run_chat_cursor_agent(
+                    &state,
+                    &app,
+                    &event_name,
+                    &config,
+                    &system_prompt,
+                    &messages,
+                )
+                .await
             } else {
                 run_chat_loop(
                     &state,
@@ -1394,6 +1432,21 @@ impl K8sState {
         Ok(models)
     }
 
+    /// Check if Ollama is reachable at the given (or default) base URL.
+    pub async fn ollama_available(base_url: Option<&str>) -> Result<bool> {
+        let http = HttpClient::new();
+        let base = base_url.unwrap_or("http://localhost:11434");
+        let resp = http
+            .get(format!("{base}/api/tags"))
+            .timeout(std::time::Duration::from_secs(3))
+            .send()
+            .await;
+        match resp {
+            Ok(r) => Ok(r.status().is_success()),
+            Err(_) => Ok(false),
+        }
+    }
+
     /// Check if the `claude` CLI is available in PATH.
     pub async fn claude_cli_available() -> Result<bool> {
         let output = tokio::process::Command::new("claude")
@@ -1422,6 +1475,67 @@ impl K8sState {
             "sonnet".to_string(),
             "haiku".to_string(),
         ])
+    }
+
+    /// Check if the `agent` (Cursor Agent) CLI is available in PATH.
+    pub async fn cursor_agent_cli_available() -> Result<bool> {
+        let output = tokio::process::Command::new("agent")
+            .arg("--version")
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .output()
+            .await;
+
+        match output {
+            Ok(o) => Ok(o.status.success()),
+            Err(_) => Ok(false),
+        }
+    }
+
+    /// List available Cursor Agent models by parsing `agent models` output.
+    pub async fn list_cursor_agent_models() -> Result<Vec<String>> {
+        if !Self::cursor_agent_cli_available().await? {
+            return Err(K8sError::Validation(
+                "Cursor Agent CLI is not installed or not in PATH".into(),
+            ));
+        }
+
+        let output = tokio::process::Command::new("agent")
+            .arg("models")
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .output()
+            .await
+            .map_err(|e| K8sError::Validation(format!("Failed to run agent models: {e}")))?;
+
+        if !output.status.success() {
+            return Err(K8sError::Validation(
+                "agent models command failed".into(),
+            ));
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let clean = strip_ansi_codes(&stdout);
+
+        let mut models = Vec::new();
+        for line in clean.lines() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() || !trimmed.contains(" - ") {
+                continue;
+            }
+            if let Some(id) = trimmed.split(" - ").next() {
+                let id = id.trim();
+                if !id.is_empty()
+                    && !id.contains(' ')
+                    && id != "Available"
+                    && id != "Tip:"
+                {
+                    models.push(id.to_string());
+                }
+            }
+        }
+
+        Ok(models)
     }
 
     /// Test that the configured AI provider is reachable and the API key is valid.
@@ -1483,6 +1597,7 @@ impl K8sState {
                 resp.status().is_success()
             }
             AIProvider::ClaudeCli => Self::claude_cli_available().await?,
+            AIProvider::CursorAgent => Self::cursor_agent_cli_available().await?,
         };
 
         info!(provider = ?config.provider, success = result, "AI connection test");
@@ -1499,9 +1614,13 @@ async fn stream_ai_response(
     system_prompt: &str,
     user_message: &str,
 ) -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    // Claude CLI uses a subprocess instead of HTTP
+    // CLI-based providers use a subprocess instead of HTTP
     if matches!(config.provider, AIProvider::ClaudeCli) {
         return stream_claude_cli_response(app, event_name, config, system_prompt, user_message)
+            .await;
+    }
+    if matches!(config.provider, AIProvider::CursorAgent) {
+        return stream_cursor_agent_response(app, event_name, config, system_prompt, user_message)
             .await;
     }
 
@@ -1569,8 +1688,7 @@ async fn stream_ai_response(
                 .send()
                 .await?
         }
-        AIProvider::ClaudeCli => {
-            // Handled above via early return
+        AIProvider::ClaudeCli | AIProvider::CursorAgent => {
             unreachable!()
         }
     };
@@ -1611,7 +1729,7 @@ async fn stream_ai_response(
                 AIProvider::OpenAI => parse_openai_sse_line(&line),
                 AIProvider::Anthropic => parse_anthropic_sse_line(&line),
                 AIProvider::Ollama => parse_ollama_stream_line(&line),
-                AIProvider::ClaudeCli => unreachable!(),
+                AIProvider::ClaudeCli | AIProvider::CursorAgent => unreachable!(),
             };
 
             match content {
@@ -1850,9 +1968,6 @@ fn parse_claude_cli_stream_line(line: &str, already_received_chunks: bool) -> SS
             let top_type = val.get("type").and_then(|v| v.as_str()).unwrap_or("");
 
             if top_type == "result" {
-                // The result event contains the full text in "result" field.
-                // Only use it if we haven't received any streaming deltas yet,
-                // to avoid duplicating content.
                 if !already_received_chunks {
                     if let Some(text) = val.get("result").and_then(|v| v.as_str()) {
                         if !text.is_empty() {
@@ -1863,7 +1978,6 @@ fn parse_claude_cli_stream_line(line: &str, already_received_chunks: bool) -> SS
                 return SSEContent::Done;
             }
 
-            // Streaming delta: content_block_delta at top level
             if top_type == "content_block_delta" {
                 let text = val
                     .pointer("/delta/text")
@@ -1873,7 +1987,6 @@ fn parse_claude_cli_stream_line(line: &str, already_received_chunks: bool) -> SS
                 return SSEContent::Text(text);
             }
 
-            // Complete assistant message (emitted without --include-partial-messages)
             if top_type == "assistant" {
                 let text = val
                     .pointer("/message/content")
@@ -1900,6 +2013,230 @@ fn parse_claude_cli_stream_line(line: &str, already_received_chunks: bool) -> SS
                     return SSEContent::Text(text);
                 }
                 return SSEContent::Skip;
+            }
+
+            SSEContent::Skip
+        }
+        Err(_) => SSEContent::Skip,
+    }
+}
+
+// ── Cursor Agent CLI streaming ───────────────────────────────────────────
+
+/// Cursor Agent chat — pre-gather cluster health context, then stream via `agent` subprocess.
+async fn run_chat_cursor_agent(
+    state: &K8sState,
+    app: &AppHandle,
+    event_name: &str,
+    config: &AIConfig,
+    system_prompt: &str,
+    frontend_messages: &[ChatMessage],
+) -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let health_context = match state.get_cluster_health().await {
+        Ok(health) => {
+            app.emit(
+                event_name,
+                &AIStreamEvent::Status {
+                    message: "Gathering cluster health...".to_string(),
+                },
+            )?;
+            serde_json::to_string_pretty(&health).unwrap_or_default()
+        }
+        Err(e) => format!("Failed to get cluster health: {e}"),
+    };
+
+    let user_messages: Vec<String> = frontend_messages
+        .iter()
+        .filter(|m| m.role == "user")
+        .map(|m| m.content.clone())
+        .collect();
+    let last_user_msg = user_messages.last().cloned().unwrap_or_default();
+
+    let enriched_prompt = format!(
+        "{system_prompt}\n\n## Current Cluster State\n```json\n{health_context}\n```\n\n\
+         ## User Question\n{last_user_msg}"
+    );
+
+    stream_cursor_agent_response(app, event_name, config, "", &enriched_prompt).await
+}
+
+/// Stream AI response via the `agent` (Cursor Agent) CLI subprocess.
+async fn stream_cursor_agent_response(
+    app: &AppHandle,
+    event_name: &str,
+    config: &AIConfig,
+    system_prompt: &str,
+    user_message: &str,
+) -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let full_prompt = format!("{system_prompt}\n\n{user_message}");
+
+    let mut cmd = tokio::process::Command::new("agent");
+    cmd.arg("-p")
+        .arg("--output-format")
+        .arg("stream-json")
+        .arg("--stream-partial-output")
+        .arg("--model")
+        .arg(&config.model)
+        .arg("--mode")
+        .arg("ask")
+        .arg("--trust")
+        .arg("--workspace")
+        .arg("/tmp")
+        .arg(&full_prompt)
+        .env_remove("CURSOR_AGENT_ENTRYPOINT")
+        .env_remove("CURSORAGENT")
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("Failed to spawn agent CLI: {e}"))?;
+
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or("Failed to capture agent CLI stdout")?;
+
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or("Failed to capture agent CLI stderr")?;
+
+    let stderr_handle = tokio::spawn(async move {
+        let mut stderr_reader = BufReader::new(stderr);
+        let mut stderr_buf = String::new();
+        let _ = tokio::io::AsyncReadExt::read_to_string(&mut stderr_reader, &mut stderr_buf).await;
+        stderr_buf
+    });
+
+    let mut reader = BufReader::new(stdout).lines();
+    let mut received_chunks = false;
+
+    while let Some(line) = reader.next_line().await? {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        match parse_cursor_agent_stream_line(trimmed, received_chunks) {
+            SSEContent::Text(text) => {
+                if !text.is_empty() {
+                    received_chunks = true;
+                    app.emit(event_name, &AIStreamEvent::Chunk { content: text })?;
+                }
+            }
+            SSEContent::Done => {
+                app.emit(event_name, &AIStreamEvent::Done)?;
+                let _ = child.wait().await;
+                return Ok(());
+            }
+            SSEContent::Skip => {}
+        }
+    }
+
+    let status = child.wait().await?;
+    let stderr_output = stderr_handle.await.unwrap_or_default();
+
+    if !status.success() {
+        let detail = if stderr_output.trim().is_empty() {
+            format!("Cursor Agent exited with status {status}")
+        } else {
+            let last_lines: String = stderr_output
+                .lines()
+                .rev()
+                .take(5)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect::<Vec<_>>()
+                .join("\n");
+            format!("Cursor Agent error: {last_lines}")
+        };
+        app.emit(
+            event_name,
+            &AIStreamEvent::Error {
+                message: detail.clone(),
+            },
+        )?;
+        return Err(detail.into());
+    }
+
+    app.emit(event_name, &AIStreamEvent::Done)?;
+    Ok(())
+}
+
+/// Parse a Cursor Agent stream-json line (JSONL format).
+///
+/// The Cursor Agent CLI uses the same streaming format conventions:
+/// - `{"type":"content_block_delta","delta":{"type":"text_delta","text":"..."}}`
+/// - `{"type":"result","result":"full text",...}`
+/// - `{"type":"assistant","message":{"content":[{"type":"text","text":"..."}]}}`
+///
+/// Falls back to treating any JSON with a top-level "text" or "content" field as text.
+fn parse_cursor_agent_stream_line(line: &str, already_received_chunks: bool) -> SSEContent {
+    let parsed: std::result::Result<serde_json::Value, _> = serde_json::from_str(line);
+    match parsed {
+        Ok(val) => {
+            let top_type = val.get("type").and_then(|v| v.as_str()).unwrap_or("");
+
+            if top_type == "result" {
+                if !already_received_chunks {
+                    if let Some(text) = val.get("result").and_then(|v| v.as_str()) {
+                        if !text.is_empty() {
+                            return SSEContent::Text(text.to_string());
+                        }
+                    }
+                }
+                return SSEContent::Done;
+            }
+
+            if top_type == "content_block_delta" {
+                let text = val
+                    .pointer("/delta/text")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                return SSEContent::Text(text);
+            }
+
+            if top_type == "assistant" {
+                let text = val
+                    .pointer("/message/content")
+                    .and_then(|v| v.as_array())
+                    .and_then(|arr| {
+                        let parts: Vec<&str> = arr
+                            .iter()
+                            .filter_map(|block| {
+                                if block.get("type").and_then(|t| t.as_str()) == Some("text") {
+                                    block.get("text").and_then(|t| t.as_str())
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect();
+                        if parts.is_empty() {
+                            None
+                        } else {
+                            Some(parts.join(""))
+                        }
+                    })
+                    .unwrap_or_default();
+                if !text.is_empty() {
+                    return SSEContent::Text(text);
+                }
+                return SSEContent::Skip;
+            }
+
+            // Fallback: plain text field
+            if let Some(text) = val.get("text").and_then(|v| v.as_str()) {
+                if !text.is_empty() {
+                    return SSEContent::Text(text.to_string());
+                }
+            }
+            if let Some(content) = val.get("content").and_then(|v| v.as_str()) {
+                if !content.is_empty() {
+                    return SSEContent::Text(content.to_string());
+                }
             }
 
             SSEContent::Skip

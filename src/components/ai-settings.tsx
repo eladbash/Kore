@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, useRef } from "react";
 import { motion } from "framer-motion";
 import { Settings2, Loader2, CheckCircle2, AlertCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -7,7 +7,7 @@ import { useToast } from "./toast";
 // ── Types ────────────────────────────────────────────────────────────────
 
 export interface AIConfig {
-  provider: "openai" | "anthropic" | "ollama" | "claude_cli";
+  provider: "openai" | "anthropic" | "ollama" | "claude_cli" | "cursor_agent";
   api_key?: string;
   model: string;
   base_url?: string;
@@ -53,6 +53,13 @@ const providers: ProviderOption[] = [
     needsApiKey: false,
     needsBaseUrl: false,
   },
+  {
+    id: "cursor_agent",
+    label: "Cursor Agent",
+    defaultModel: "auto",
+    needsApiKey: false,
+    needsBaseUrl: false,
+  },
 ];
 
 const STORAGE_KEY = "kore-ai-config";
@@ -64,10 +71,30 @@ export function AISettings({ config, onConfigChange }: AISettingsProps) {
   const [testResult, setTestResult] = useState<"success" | "error" | null>(null);
   const [ollamaModels, setOllamaModels] = useState<string[]>([]);
   const [claudeModels, setClaudeModels] = useState<string[]>([]);
+  const [cursorAgentModels, setCursorAgentModels] = useState<string[]>([]);
   const [loadingModels, setLoadingModels] = useState(false);
+  const [providerAvailability, setProviderAvailability] = useState<Record<string, boolean>>({});
+  const availabilityChecked = useRef(false);
   const toast = useToast();
 
   const currentProvider = providers.find((p) => p.id === config.provider) || providers[0];
+
+  // Check CLI/service availability on mount
+  useEffect(() => {
+    if (availabilityChecked.current) return;
+    availabilityChecked.current = true;
+
+    const check = async () => {
+      try {
+        const { invoke } = await import("@tauri-apps/api/core");
+        const availability = await invoke<Record<string, boolean>>("check_providers_availability");
+        setProviderAvailability(availability);
+      } catch {
+        // If check fails, assume all available
+      }
+    };
+    check();
+  }, []);
 
   // Persist config to localStorage whenever it changes
   useEffect(() => {
@@ -145,6 +172,38 @@ export function AISettings({ config, onConfigChange }: AISettingsProps) {
     };
   }, [config.provider]);
 
+  // Fetch Cursor Agent models when provider is cursor_agent
+  useEffect(() => {
+    if (config.provider !== "cursor_agent") {
+      setCursorAgentModels([]);
+      return;
+    }
+
+    let cancelled = false;
+    const fetchModels = async () => {
+      setLoadingModels(true);
+      try {
+        const { invoke } = await import("@tauri-apps/api/core");
+        const models = await invoke<string[]>("list_cursor_agent_models");
+        if (!cancelled) {
+          setCursorAgentModels(models);
+          if (models.length > 0 && !models.includes(config.model)) {
+            onConfigChange({ ...config, model: models[0] });
+          }
+        }
+      } catch {
+        if (!cancelled) setCursorAgentModels([]);
+      } finally {
+        if (!cancelled) setLoadingModels(false);
+      }
+    };
+
+    fetchModels();
+    return () => {
+      cancelled = true;
+    };
+  }, [config.provider]);
+
   const handleProviderChange = useCallback(
     (providerId: AIConfig["provider"]) => {
       const provider = providers.find((p) => p.id === providerId)!;
@@ -193,21 +252,34 @@ export function AISettings({ config, onConfigChange }: AISettingsProps) {
 
       {/* Provider Segmented Control */}
       <div className="flex rounded-lg border border-slate-800 overflow-hidden">
-        {providers.map((provider) => (
-          <button
-            key={provider.id}
-            onClick={() => handleProviderChange(provider.id)}
-            className={cn(
-              "flex-1 px-3 py-2 text-xs font-medium transition",
-              config.provider === provider.id
-                ? "bg-accent/15 text-accent border-accent/30"
-                : "bg-surface/60 text-slate-400 hover:text-slate-200 hover:bg-muted/40",
-              provider.id !== providers[providers.length - 1].id && "border-r border-slate-800",
-            )}
-          >
-            {provider.label}
-          </button>
-        ))}
+        {providers.map((provider) => {
+          const isUnavailable =
+            provider.id in providerAvailability && !providerAvailability[provider.id];
+          return (
+            <button
+              key={provider.id}
+              onClick={() => !isUnavailable && handleProviderChange(provider.id)}
+              disabled={isUnavailable}
+              title={isUnavailable ? `${provider.label} is not installed or not running` : undefined}
+              className={cn(
+                "flex-1 px-3 py-2 text-xs font-medium transition",
+                config.provider === provider.id
+                  ? "bg-accent/15 text-accent border-accent/30"
+                  : isUnavailable
+                    ? "bg-surface/60 text-slate-600 cursor-not-allowed opacity-40"
+                    : "bg-surface/60 text-slate-400 hover:text-slate-200 hover:bg-muted/40",
+                provider.id !== providers[providers.length - 1].id && "border-r border-slate-800",
+              )}
+            >
+              {provider.label}
+              {isUnavailable && (
+                <span className="block text-[9px] text-slate-600 leading-tight mt-0.5">
+                  not found
+                </span>
+              )}
+            </button>
+          );
+        })}
       </div>
 
       {/* API Key (OpenAI / Anthropic) */}
@@ -260,7 +332,22 @@ export function AISettings({ config, onConfigChange }: AISettingsProps) {
               </option>
             ))}
           </select>
-        ) : (config.provider === "ollama" || config.provider === "claude_cli") && loadingModels ? (
+        ) : config.provider === "cursor_agent" && cursorAgentModels.length > 0 ? (
+          <select
+            value={config.model}
+            onChange={(e) => {
+              setTestResult(null);
+              onConfigChange({ ...config, model: e.target.value });
+            }}
+            className="w-full px-3 py-2 bg-surface/60 border border-slate-800 rounded-lg text-sm text-slate-100 focus:outline-none focus:border-accent/50 transition font-mono appearance-none cursor-pointer"
+          >
+            {cursorAgentModels.map((model) => (
+              <option key={model} value={model}>
+                {model}
+              </option>
+            ))}
+          </select>
+        ) : (config.provider === "ollama" || config.provider === "claude_cli" || config.provider === "cursor_agent") && loadingModels ? (
           <div className="flex items-center gap-2 px-3 py-2 bg-surface/60 border border-slate-800 rounded-lg text-sm text-slate-500">
             <Loader2 className="w-3.5 h-3.5 animate-spin" />
             Loading models...

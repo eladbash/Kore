@@ -122,6 +122,9 @@ fn main() {
             list_ollama_models,
             claude_cli_available,
             list_claude_models,
+            cursor_agent_available,
+            list_cursor_agent_models,
+            check_providers_availability,
             // Favorites persistence
             load_favorites,
             save_favorites,

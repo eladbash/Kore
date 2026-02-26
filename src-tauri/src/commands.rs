@@ -687,6 +687,34 @@ pub async fn list_claude_models() -> std::result::Result<Vec<String>, String> {
         .map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+pub async fn cursor_agent_available() -> std::result::Result<bool, String> {
+    K8sState::cursor_agent_cli_available()
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn list_cursor_agent_models() -> std::result::Result<Vec<String>, String> {
+    K8sState::list_cursor_agent_models()
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn check_providers_availability() -> std::result::Result<HashMap<String, bool>, String> {
+    let (claude, cursor, ollama) = tokio::join!(
+        K8sState::claude_cli_available(),
+        K8sState::cursor_agent_cli_available(),
+        K8sState::ollama_available(None),
+    );
+    let mut map = HashMap::new();
+    map.insert("claude_cli".to_string(), claude.unwrap_or(false));
+    map.insert("cursor_agent".to_string(), cursor.unwrap_or(false));
+    map.insert("ollama".to_string(), ollama.unwrap_or(false));
+    Ok(map)
+}
+
 // ── Favorites Persistence ────────────────────────────────────────────
 
 fn favorites_path() -> std::result::Result<std::path::PathBuf, String> {

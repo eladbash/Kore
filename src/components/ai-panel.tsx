@@ -11,7 +11,7 @@ import { AISettings } from "./ai-settings";
 // ── Types ────────────────────────────────────────────────────────────────
 
 export interface AIConfig {
-  provider: "openai" | "anthropic" | "ollama" | "claude_cli";
+  provider: "openai" | "anthropic" | "ollama" | "claude_cli" | "cursor_agent";
   api_key?: string;
   model: string;
   base_url?: string;
