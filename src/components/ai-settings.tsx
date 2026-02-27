@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, useRef } from "react";
 import { motion } from "framer-motion";
-import { Settings2, Loader2, CheckCircle2, AlertCircle } from "lucide-react";
+import { Loader2, CheckCircle2, AlertCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useToast } from "./toast";
 
@@ -101,6 +101,8 @@ export function AISettings({ config, onConfigChange }: AISettingsProps) {
     try {
       const { api_key: _, ...configWithoutKey } = config;
       localStorage.setItem(STORAGE_KEY, JSON.stringify(configWithoutKey));
+      // Notify same-window listeners (StorageEvent only fires in other windows)
+      window.dispatchEvent(new CustomEvent("kore-ai-config-change"));
     } catch {
       // ignore write errors
     }
@@ -270,12 +272,6 @@ export function AISettings({ config, onConfigChange }: AISettingsProps) {
       transition={{ duration: 0.2 }}
       className="space-y-5"
     >
-      {/* Section Header */}
-      <div className="flex items-center gap-2">
-        <Settings2 className="w-4 h-4 text-accent" />
-        <h3 className="text-sm font-semibold text-slate-100">AI Provider</h3>
-      </div>
-
       {/* Provider Segmented Control */}
       <div className="flex rounded-lg border border-slate-800 overflow-hidden">
         {providers.map((provider) => {

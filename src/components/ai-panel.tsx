@@ -1,21 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Bot, Send, X, Copy, Sparkles, Loader2, Settings2, Trash2 } from "lucide-react";
+import { Bot, Send, X, Copy, Sparkles, Loader2, Trash2 } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { cn } from "@/lib/utils";
 import { useToast } from "./toast";
-import { AISettings } from "./ai-settings";
+import type { AIConfig } from "./ai-settings";
 
 // ── Types ────────────────────────────────────────────────────────────────
 
-export interface AIConfig {
-  provider: "openai" | "anthropic" | "ollama" | "claude_cli" | "cursor_agent";
-  api_key?: string;
-  model: string;
-  base_url?: string;
-}
+export type { AIConfig };
 
 interface ChatMessage {
   role: "user" | "assistant";
@@ -87,12 +82,59 @@ export function AIPanel({ open, onClose, resourceContext }: AIPanelProps) {
   const [input, setInput] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
   const [, setSessionId] = useState(() => nextSessionId());
-  const [showSettings, setShowSettings] = useState(false);
   const [aiConfig, setAiConfig] = useState<AIConfig>(() => loadAIConfig());
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const toast = useToast();
+
+  // Reload AI config (with API key) from localStorage + secure storage
+  const reloadConfigWithKey = useCallback(async () => {
+    const config = loadAIConfig();
+    setIsStreaming(false); // reset stuck streaming state on config change
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      const key = await invoke<string | null>("get_api_key", { provider: config.provider });
+      if (key) {
+        setAiConfig({ ...config, api_key: key });
+        return;
+      }
+    } catch {
+      // key may not exist yet
+    }
+    setAiConfig(config);
+  }, []);
+
+  // Reload when config changes in localStorage (e.g. from settings page)
+  useEffect(() => {
+    const handleStorage = (e: StorageEvent) => {
+      if (e.key === "kore-ai-config") reloadConfigWithKey();
+    };
+    window.addEventListener("storage", handleStorage);
+    window.addEventListener("kore-ai-config-change", reloadConfigWithKey);
+    return () => {
+      window.removeEventListener("storage", handleStorage);
+      window.removeEventListener("kore-ai-config-change", reloadConfigWithKey);
+    };
+  }, [reloadConfigWithKey]);
+
+  // Load API key from secure storage on mount and when provider changes
+  useEffect(() => {
+    let cancelled = false;
+    const loadKey = async () => {
+      try {
+        const { invoke } = await import("@tauri-apps/api/core");
+        const key = await invoke<string | null>("get_api_key", { provider: aiConfig.provider });
+        if (!cancelled && key) {
+          setAiConfig((prev) => ({ ...prev, api_key: key }));
+        }
+      } catch {
+        // key may not exist yet
+      }
+    };
+    loadKey();
+    return () => { cancelled = true; };
+  }, [aiConfig.provider]);
 
   // Auto-scroll to bottom when messages change
   useEffect(() => {
@@ -288,16 +330,6 @@ export function AIPanel({ open, onClose, resourceContext }: AIPanelProps) {
                   <Trash2 className="w-4 h-4" />
                 </button>
                 <button
-                  onClick={() => setShowSettings((v) => !v)}
-                  className={cn(
-                    "p-1.5 rounded-md hover:bg-muted/50 transition",
-                    showSettings ? "text-accent" : "text-slate-400 hover:text-slate-200",
-                  )}
-                  aria-label="AI settings"
-                >
-                  <Settings2 className="w-4 h-4" />
-                </button>
-                <button
                   onClick={onClose}
                   className="p-1.5 rounded-md hover:bg-muted/50 transition text-slate-400 hover:text-slate-200"
                   aria-label="Close AI panel"
@@ -307,15 +339,8 @@ export function AIPanel({ open, onClose, resourceContext }: AIPanelProps) {
               </div>
             </div>
 
-            {/* AI Settings (collapsible) */}
-            {showSettings && (
-              <div className="px-4 py-4 border-b border-slate-800/50 bg-background/50">
-                <AISettings config={aiConfig} onConfigChange={setAiConfig} />
-              </div>
-            )}
-
             {/* Resource Context Indicator */}
-            {resourceContext && !showSettings && (
+            {resourceContext && (
               <div className="px-4 py-2 border-b border-slate-800/50 bg-accent/5">
                 <div className="flex items-center gap-2 text-xs">
                   <Sparkles className="w-3.5 h-3.5 text-accent shrink-0" />

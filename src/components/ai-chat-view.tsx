@@ -1,11 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion } from "framer-motion";
 import {
   Bot,
   Send,
   Copy,
   Loader2,
-  Settings2,
   Trash2,
   Wrench,
   Activity,
@@ -19,7 +18,6 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { cn } from "@/lib/utils";
 import { useToast } from "./toast";
-import { AISettings } from "./ai-settings";
 import type { AIConfig } from "./ai-settings";
 import { aiChat } from "@/lib/api";
 import type { ChatMessage } from "@/lib/api";
@@ -99,13 +97,61 @@ export function AIChatView({ namespace }: AIChatViewProps) {
   const [input, setInput] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
   const [toolStatus, setToolStatus] = useState<string | null>(null);
-  const [showSettings, setShowSettings] = useState(false);
   const [aiConfig, setAiConfig] = useState<AIConfig>(() => loadAIConfig());
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const unlistenRef = useRef<(() => void) | null>(null);
   const toast = useToast();
+
+  // Reload AI config (with API key) from localStorage + secure storage
+  const reloadConfigWithKey = useCallback(async () => {
+    const config = loadAIConfig();
+    setIsStreaming(false); // reset stuck streaming state on config change
+    setToolStatus(null);
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      const key = await invoke<string | null>("get_api_key", { provider: config.provider });
+      if (key) {
+        setAiConfig({ ...config, api_key: key });
+        return;
+      }
+    } catch {
+      // key may not exist yet
+    }
+    setAiConfig(config);
+  }, []);
+
+  // Reload when config changes in localStorage (e.g. from settings page)
+  useEffect(() => {
+    const handleStorage = (e: StorageEvent) => {
+      if (e.key === "kore-ai-config") reloadConfigWithKey();
+    };
+    window.addEventListener("storage", handleStorage);
+    window.addEventListener("kore-ai-config-change", reloadConfigWithKey);
+    return () => {
+      window.removeEventListener("storage", handleStorage);
+      window.removeEventListener("kore-ai-config-change", reloadConfigWithKey);
+    };
+  }, [reloadConfigWithKey]);
+
+  // Load API key from secure storage on mount and when provider changes
+  useEffect(() => {
+    let cancelled = false;
+    const loadKey = async () => {
+      try {
+        const { invoke } = await import("@tauri-apps/api/core");
+        const key = await invoke<string | null>("get_api_key", { provider: aiConfig.provider });
+        if (!cancelled && key) {
+          setAiConfig((prev) => ({ ...prev, api_key: key }));
+        }
+      } catch {
+        // key may not exist yet
+      }
+    };
+    loadKey();
+    return () => { cancelled = true; };
+  }, [aiConfig.provider]);
 
   // Auto-scroll on new messages
   useEffect(() => {
@@ -276,34 +322,8 @@ export function AIChatView({ namespace }: AIChatViewProps) {
           >
             <Trash2 className="w-4 h-4" />
           </button>
-          <button
-            onClick={() => setShowSettings((v) => !v)}
-            className={cn(
-              "p-1.5 rounded-md hover:bg-muted/50 transition",
-              showSettings ? "text-accent" : "text-slate-400 hover:text-slate-200",
-            )}
-            title="AI settings"
-          >
-            <Settings2 className="w-4 h-4" />
-          </button>
         </div>
       </div>
-
-      {/* Settings */}
-      <AnimatePresence>
-        {showSettings && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: "auto", opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            className="overflow-hidden border-b border-slate-800/50 bg-background/50"
-          >
-            <div className="px-6 py-4">
-              <AISettings config={aiConfig} onConfigChange={setAiConfig} />
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
 
       {/* Messages area */}
       <div className="flex-1 overflow-y-auto">

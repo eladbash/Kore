@@ -9,7 +9,9 @@ import {
   Palette,
   Globe,
   Layout,
+  Bot,
 } from "lucide-react";
+import { AISettings, type AIConfig } from "./ai-settings";
 import { cn } from "@/lib/utils";
 import type { AppView } from "@/lib/types";
 
@@ -133,6 +135,18 @@ export function Settings({ onBack }: SettingsProps) {
   const [settings, setSettings] = useState<KoreSettings>(() => loadSettings());
   const [contextInput, setContextInput] = useState("");
   const [namespaceInput, setNamespaceInput] = useState("");
+  const [aiConfig, setAiConfig] = useState<AIConfig>(() => {
+    try {
+      const stored = localStorage.getItem("kore-ai-config");
+      if (stored) {
+        const { api_key: _, ...config } = JSON.parse(stored);
+        return config as AIConfig;
+      }
+    } catch {
+      // ignore
+    }
+    return { provider: "openai", model: "gpt-4o" };
+  });
 
   // Esc to go back
   useEffect(() => {
@@ -262,6 +276,20 @@ export function Settings({ onBack }: SettingsProps) {
               </p>
             </div>
           </div>
+        </motion.div>
+
+        {/* AI Provider Section */}
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.075 }}
+          className="glass rounded-xl p-5"
+        >
+          <div className="flex items-center gap-2 mb-4">
+            <Bot className="w-4 h-4 text-accent" />
+            <h2 className="text-sm font-semibold text-slate-100">AI Provider</h2>
+          </div>
+          <AISettings config={aiConfig} onConfigChange={setAiConfig} />
         </motion.div>
 
         {/* Display Section */}
