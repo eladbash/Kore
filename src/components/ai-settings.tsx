@@ -122,7 +122,9 @@ export function AISettings({ config, onConfigChange }: AISettingsProps) {
       }
     };
     loadKey();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [config.provider]);
 
@@ -284,7 +286,9 @@ export function AISettings({ config, onConfigChange }: AISettingsProps) {
               key={provider.id}
               onClick={() => !isUnavailable && handleProviderChange(provider.id)}
               disabled={isUnavailable}
-              title={isUnavailable ? `${provider.label} is not installed or not running` : undefined}
+              title={
+                isUnavailable ? `${provider.label} is not installed or not running` : undefined
+              }
               className={cn(
                 "flex-1 px-3 py-2 text-xs font-medium transition",
                 config.provider === provider.id
@@ -320,7 +324,9 @@ export function AISettings({ config, onConfigChange }: AISettingsProps) {
               // Persist to secure storage
               if (newKey) {
                 import("@tauri-apps/api/core").then(({ invoke }) => {
-                  invoke("store_api_key", { provider: config.provider, key: newKey }).catch(() => {});
+                  invoke("store_api_key", { provider: config.provider, key: newKey }).catch(
+                    () => {},
+                  );
                 });
               } else {
                 import("@tauri-apps/api/core").then(({ invoke }) => {
@@ -382,7 +388,10 @@ export function AISettings({ config, onConfigChange }: AISettingsProps) {
               </option>
             ))}
           </select>
-        ) : (config.provider === "ollama" || config.provider === "claude_cli" || config.provider === "cursor_agent") && loadingModels ? (
+        ) : (config.provider === "ollama" ||
+            config.provider === "claude_cli" ||
+            config.provider === "cursor_agent") &&
+          loadingModels ? (
           <div className="flex items-center gap-2 px-3 py-2 bg-surface/60 border border-slate-800 rounded-lg text-sm text-slate-500">
             <Loader2 className="w-3.5 h-3.5 animate-spin" />
             Loading models...

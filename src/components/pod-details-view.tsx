@@ -186,10 +186,8 @@ function LogRow(props: RowComponentProps<LogRowProps>) {
   const { index, style, logLines, logSearch, logSearchMatches, logSearchIndex } = props;
   const line = logLines[index];
   const levelColor = getLogLevelColor(line);
-  const isSearchMatch =
-    logSearch && line.toLowerCase().includes(logSearch.toLowerCase());
-  const isCurrentMatch =
-    logSearchMatches.length > 0 && logSearchMatches[logSearchIndex] === index;
+  const isSearchMatch = logSearch && line.toLowerCase().includes(logSearch.toLowerCase());
+  const isCurrentMatch = logSearchMatches.length > 0 && logSearchMatches[logSearchIndex] === index;
 
   return (
     <div
@@ -370,7 +368,6 @@ export function PodDetailsView({ pod, onBack }: PodDetailsViewProps) {
       virtualListRef.current.scrollToRow({ index: logLines.length - 1, align: "end" });
     }
   }, [logs, autoScroll, logLines.length]);
-
 
   // Listen for pod deletion events
   useEffect(() => {

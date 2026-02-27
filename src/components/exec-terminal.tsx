@@ -110,7 +110,10 @@ export function ExecTerminal({ namespace, podName, container }: ExecTerminalProp
             term.write(event.payload.data);
           }
         });
-        if (!isMounted) { unlStdout(); return; }
+        if (!isMounted) {
+          unlStdout();
+          return;
+        }
         unlistenStdout = unlStdout;
 
         // Listen for exit
@@ -126,7 +129,11 @@ export function ExecTerminal({ namespace, podName, container }: ExecTerminalProp
             term.write("\r\n\x1b[33mSession ended.\x1b[0m\r\n");
           }
         });
-        if (!isMounted) { unlExit(); unlStdout(); return; }
+        if (!isMounted) {
+          unlExit();
+          unlStdout();
+          return;
+        }
         unlistenExit = unlExit;
       } catch (err) {
         if (!isMounted) return;
