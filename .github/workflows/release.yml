@@ -41,13 +41,16 @@ jobs:
 
       - run: npm run build
 
-      - name: Build and sign macOS app
-        timeout-minutes: 20
+      - name: Build, sign, and notarize macOS app
+        timeout-minutes: 30
         run: npx tauri build --target ${{ matrix.target }} --bundles dmg
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
 
       - uses: softprops/action-gh-release@v2
         with:

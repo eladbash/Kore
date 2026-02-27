@@ -95,8 +95,15 @@ export function YamlEditor({ kind, namespace, name }: YamlEditorProps) {
 
   // Search state
   const [searchVisible, setSearchVisible] = useState(false);
+  const [searchInput, setSearchInput] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [searchIndex, setSearchIndex] = useState(0);
+
+  // Debounce search input to avoid expensive highlighting on every keystroke
+  useEffect(() => {
+    const timer = setTimeout(() => setSearchQuery(searchInput), 200);
+    return () => clearTimeout(timer);
+  }, [searchInput]);
 
   const hasChanges = yaml !== originalYaml;
 
@@ -122,6 +129,7 @@ export function YamlEditor({ kind, namespace, name }: YamlEditorProps) {
     setDiffLines(null);
     setReadOnly(true);
     setSearchVisible(false);
+    setSearchInput("");
     setSearchQuery("");
     getResourceYaml(kind, namespace, name)
       .then((data) => {
@@ -271,12 +279,13 @@ export function YamlEditor({ kind, namespace, name }: YamlEditorProps) {
 
   const handleSearchClose = useCallback(() => {
     setSearchVisible(false);
+    setSearchInput("");
     setSearchQuery("");
     setSearchIndex(0);
   }, []);
 
   const handleSearchQueryChange = useCallback((q: string) => {
-    setSearchQuery(q);
+    setSearchInput(q);
     setSearchIndex(0);
   }, []);
 
@@ -365,7 +374,7 @@ export function YamlEditor({ kind, namespace, name }: YamlEditorProps) {
         {/* Search bar */}
         {searchVisible && (
           <TextSearchBar
-            query={searchQuery}
+            query={searchInput}
             onQueryChange={handleSearchQueryChange}
             matchCount={searchMatches.length}
             currentMatch={searchIndex}

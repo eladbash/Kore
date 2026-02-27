@@ -196,6 +196,18 @@ impl K8sState {
             }
         }
 
+        // Build label index for O(1)-ish lookups: group pods by each label key=value pair
+        use std::collections::{HashMap, HashSet};
+        let mut pod_label_index: HashMap<(String, String), HashSet<usize>> = HashMap::new();
+        for (idx, (_pod_name, _pod_ns, _pod_status, labels)) in pod_labels.iter().enumerate() {
+            for (k, v) in labels {
+                pod_label_index
+                    .entry((k.clone(), v.clone()))
+                    .or_default()
+                    .insert(idx);
+            }
+        }
+
         // Service nodes + edges (Service -> Pods by selector)
         for svc in services.as_ref().unwrap_or(&vec![]) {
             let name = svc
@@ -219,21 +231,32 @@ impl K8sState {
                 status: svc_type.to_string(),
             });
 
-            // Match selector to pod labels
+            // Match selector to pod labels using the index for O(1)-ish lookups
             if let Some(selector) = svc.pointer("/spec/selector").and_then(|v| {
                 serde_json::from_value::<std::collections::HashMap<String, String>>(v.clone()).ok()
             }) {
-                for (pod_name, pod_ns, _, labels) in &pod_labels {
-                    if pod_ns == ns
-                        && selector
-                            .iter()
-                            .all(|(k, v)| labels.get(k).map(|lv| lv == v).unwrap_or(false))
-                    {
-                        edges.push(GraphEdge {
-                            source: make_id("Service", ns, name),
-                            target: make_id("Pod", pod_ns, pod_name),
-                            relation: "selects".to_string(),
-                        });
+                // Find pods that match ALL selector labels using the index
+                let mut matching_indices: Option<HashSet<usize>> = None;
+                for (k, v) in &selector {
+                    let matching = pod_label_index
+                        .get(&(k.clone(), v.clone()))
+                        .cloned()
+                        .unwrap_or_default();
+                    matching_indices = Some(match matching_indices {
+                        Some(existing) => existing.intersection(&matching).copied().collect(),
+                        None => matching,
+                    });
+                }
+                if let Some(indices) = matching_indices {
+                    for idx in indices {
+                        let (pod_name, pod_ns, _, _) = &pod_labels[idx];
+                        if pod_ns == ns {
+                            edges.push(GraphEdge {
+                                source: make_id("Service", ns, name),
+                                target: make_id("Pod", pod_ns, pod_name),
+                                relation: "selects".to_string(),
+                            });
+                        }
                     }
                 }
             }

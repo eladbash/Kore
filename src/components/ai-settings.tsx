@@ -96,14 +96,34 @@ export function AISettings({ config, onConfigChange }: AISettingsProps) {
     check();
   }, []);
 
-  // Persist config to localStorage whenever it changes
+  // Persist config to localStorage whenever it changes (without api_key)
   useEffect(() => {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
+      const { api_key: _, ...configWithoutKey } = config;
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(configWithoutKey));
     } catch {
       // ignore write errors
     }
   }, [config]);
+
+  // Load API key from secure storage on provider change
+  useEffect(() => {
+    if (!currentProvider.needsApiKey) return;
+    let cancelled = false;
+    const loadKey = async () => {
+      try {
+        const { invoke } = await import("@tauri-apps/api/core");
+        const key = await invoke<string | null>("get_api_key", { provider: config.provider });
+        if (!cancelled && key) {
+          onConfigChange({ ...config, api_key: key });
+        }
+      } catch {
+        // ignore - key may not exist yet
+      }
+    };
+    loadKey();
+    return () => { cancelled = true; };
+  }, [config.provider]);
 
   // Fetch installed Ollama models when provider is ollama
   useEffect(() => {
@@ -291,7 +311,18 @@ export function AISettings({ config, onConfigChange }: AISettingsProps) {
             value={config.api_key || ""}
             onChange={(e) => {
               setTestResult(null);
-              onConfigChange({ ...config, api_key: e.target.value || undefined });
+              const newKey = e.target.value || undefined;
+              onConfigChange({ ...config, api_key: newKey });
+              // Persist to secure storage
+              if (newKey) {
+                import("@tauri-apps/api/core").then(({ invoke }) => {
+                  invoke("store_api_key", { provider: config.provider, key: newKey }).catch(() => {});
+                });
+              } else {
+                import("@tauri-apps/api/core").then(({ invoke }) => {
+                  invoke("delete_api_key", { provider: config.provider }).catch(() => {});
+                });
+              }
             }}
             placeholder={`Enter your ${currentProvider.label} API key`}
             className="w-full px-3 py-2 bg-surface/60 border border-slate-800 rounded-lg text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:border-accent/50 transition"

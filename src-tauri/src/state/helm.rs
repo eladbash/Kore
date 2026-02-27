@@ -2,7 +2,7 @@ use crate::error::{K8sError, Result};
 use crate::state::K8sState;
 use serde::{Deserialize, Serialize};
 use tokio::process::Command;
-use tracing::info;
+use tracing::{info, warn};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HelmRelease {
@@ -34,6 +34,10 @@ impl K8sState {
             .output()
             .await
             .map(|o| o.status.success())
+            .map_err(|e| {
+                warn!(error = %e, "Failed to check helm availability");
+                e
+            })
             .unwrap_or(false)
     }
 

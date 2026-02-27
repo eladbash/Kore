@@ -1,3 +1,4 @@
+use crate::constants::MAX_DASHBOARD_RESOURCES;
 use crate::error::{K8sError, Result};
 use crate::state::{K8sState, ResourceKind};
 use kube::config::KubeConfigOptions;
@@ -332,9 +333,15 @@ impl K8sState {
             self.list_resources(ResourceKind::Events, None, None),
         );
 
-        let pods = pods_result.unwrap_or_default();
-        let nodes = nodes_result.unwrap_or_default();
-        let events = events_result.unwrap_or_default();
+        let pods = pods_result
+            .map_err(|e| { warn!(error = %e, "Failed to fetch pods for cluster health"); e })
+            .unwrap_or_default();
+        let nodes = nodes_result
+            .map_err(|e| { warn!(error = %e, "Failed to fetch nodes for cluster health"); e })
+            .unwrap_or_default();
+        let events = events_result
+            .map_err(|e| { warn!(error = %e, "Failed to fetch events for cluster health"); e })
+            .unwrap_or_default();
 
         Ok(compute_health(&pods, &nodes, &events))
     }
@@ -407,7 +414,7 @@ async fn fetch_resources_with_client(
     use kube::api::{Api, ListParams, ResourceExt};
     use serde_json::json;
 
-    let lp = ListParams::default();
+    let lp = ListParams::default().limit(MAX_DASHBOARD_RESOURCES);
 
     let result = match kind {
         ResourceKind::Pods => {
@@ -449,5 +456,10 @@ async fn fetch_resources_with_client(
         _ => return Vec::new(),
     };
 
-    result.unwrap_or_default()
+    result
+        .map_err(|e| {
+            warn!(kind = ?kind, error = %e, "Failed to fetch resources for dashboard");
+            e
+        })
+        .unwrap_or_default()
 }

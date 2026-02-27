@@ -10,6 +10,25 @@ use tokio::sync::{mpsc, RwLock};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
+/// Guard that removes an exec session from the map when dropped.
+struct SessionGuard {
+    sessions: Arc<RwLock<HashMap<String, ExecSession>>>,
+    session_id: String,
+}
+
+impl Drop for SessionGuard {
+    fn drop(&mut self) {
+        // Use blocking to handle async cleanup in Drop
+        let sessions = self.sessions.clone();
+        let sid = self.session_id.clone();
+        // Spawn a task to do async cleanup since Drop can't be async
+        tauri::async_runtime::spawn(async move {
+            let mut sessions = sessions.write().await;
+            sessions.remove(&sid);
+        });
+    }
+}
+
 struct ExecSession {
     cancel_token: CancellationToken,
     stdin_tx: mpsc::Sender<Vec<u8>>,
@@ -47,7 +66,7 @@ impl K8sState {
         container: Option<String>,
         shell: Option<String>,
     ) -> Result<String> {
-        let session_id = format!("{}/{}/{}", namespace, pod_name, uuid_v4());
+        let session_id = format!("{}/{}/{}", namespace, pod_name, generate_session_id());
         let cancel_token = CancellationToken::new();
         let (stdin_tx, mut stdin_rx) = mpsc::channel::<Vec<u8>>(256);
         let (resize_tx, mut resize_rx) = mpsc::channel::<(u16, u16)>(16);
@@ -74,6 +93,11 @@ impl K8sState {
         let exec_sessions = self.exec_sessions.clone();
 
         tauri::async_runtime::spawn(async move {
+            let _guard = SessionGuard {
+                sessions: exec_sessions.sessions.clone(),
+                session_id: sid.clone(),
+            };
+
             let api: Api<k8s_openapi::api::core::v1::Pod> = Api::namespaced(client, &ns);
 
             let mut ap = AttachParams::interactive_tty();
@@ -86,8 +110,20 @@ impl K8sState {
 
             match api.exec(&pn, vec![&shell_cmd], &ap).await {
                 Ok(mut attached) => {
-                    let mut stdout = attached.stdout().unwrap();
-                    let mut stdin = attached.stdin().unwrap();
+                    let mut stdout = match attached.stdout() {
+                        Some(s) => s,
+                        None => {
+                            let _ = handle.emit(&event_exit, &json!({ "error": "No stdout available from exec session" }));
+                            return;
+                        }
+                    };
+                    let mut stdin = match attached.stdin() {
+                        Some(s) => s,
+                        None => {
+                            let _ = handle.emit(&event_exit, &json!({ "error": "No stdin available from exec session" }));
+                            return;
+                        }
+                    };
 
                     // Forward stdout to frontend
                     let ct1 = cancel_token.clone();
@@ -174,9 +210,7 @@ impl K8sState {
                 }
             }
 
-            // Clean up session
-            let mut sessions = exec_sessions.sessions.write().await;
-            sessions.remove(&sid);
+            // Session cleanup is handled by SessionGuard on drop
         });
 
         Ok(session_id)
@@ -224,8 +258,9 @@ impl K8sState {
     }
 }
 
-/// Simple UUID v4 generator for session IDs.
-fn uuid_v4() -> String {
+/// Generate a random session ID. Uses thread_rng (not cryptographic)
+/// which is sufficient for internal session identification.
+fn generate_session_id() -> String {
     use rand::Rng;
     let mut rng = rand::thread_rng();
     let bytes: [u8; 16] = rng.gen();

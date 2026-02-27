@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState, useMemo, useCallback } from "react";
+import { List as VirtualList } from "react-window";
+import type { ListImperativeAPI, RowComponentProps } from "react-window";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   ArrowLeft,
@@ -173,6 +175,47 @@ function highlightMatches(text: string, query: string): React.ReactNode {
   );
 }
 
+interface LogRowProps {
+  logLines: string[];
+  logSearch: string;
+  logSearchMatches: number[];
+  logSearchIndex: number;
+}
+
+function LogRow(props: RowComponentProps<LogRowProps>) {
+  const { index, style, logLines, logSearch, logSearchMatches, logSearchIndex } = props;
+  const line = logLines[index];
+  const levelColor = getLogLevelColor(line);
+  const isSearchMatch =
+    logSearch && line.toLowerCase().includes(logSearch.toLowerCase());
+  const isCurrentMatch =
+    logSearchMatches.length > 0 && logSearchMatches[logSearchIndex] === index;
+
+  return (
+    <div
+      style={style}
+      data-line={index}
+      className={cn(
+        "flex hover:bg-white/[0.02] group",
+        isCurrentMatch && "bg-amber-400/10",
+        isSearchMatch && !isCurrentMatch && "bg-amber-400/5",
+      )}
+    >
+      <span className="select-none text-right text-slate-600 w-12 shrink-0 pr-3 py-px border-r border-slate-800/50 group-hover:text-slate-500">
+        {index + 1}
+      </span>
+      <span
+        className={cn(
+          "pl-3 py-px whitespace-pre-wrap break-all flex-1",
+          levelColor || "text-green-400",
+        )}
+      >
+        {logSearch ? highlightMatches(line, logSearch) : line}
+      </span>
+    </div>
+  );
+}
+
 export function PodDetailsView({ pod, onBack }: PodDetailsViewProps) {
   const [activeTab, setActiveTab] = useState<
     "logs" | "describe" | "yaml" | "metrics" | "events" | "shell"
@@ -196,8 +239,9 @@ export function PodDetailsView({ pod, onBack }: PodDetailsViewProps) {
   const [logSearchIndex, setLogSearchIndex] = useState(0);
   const logSearchInputRef = useRef<HTMLInputElement>(null);
 
-  const logsEndRef = useRef<HTMLDivElement>(null);
   const logsContainerRef = useRef<HTMLDivElement>(null);
+  const virtualListRef = useRef<ListImperativeAPI>(null);
+  const focusTimeoutRef = useRef<ReturnType<typeof setTimeout>>();
   const toast = useToast();
 
   const podName = pod.name || "";
@@ -319,12 +363,13 @@ export function PodDetailsView({ pod, onBack }: PodDetailsViewProps) {
     };
   }, [activeTab, namespace, podName, isDeleted, selectedContainer, showPrevious]);
 
-  // Auto-scroll logs
+  // Auto-scroll logs (for virtualized list)
   useEffect(() => {
-    if (autoScroll && logsEndRef.current && logsContainerRef.current) {
-      logsEndRef.current.scrollIntoView({ behavior: "smooth" });
+    if (autoScroll && virtualListRef.current && logLines.length > 0) {
+      virtualListRef.current.scrollToRow({ index: logLines.length - 1, align: "end" });
     }
-  }, [logs, autoScroll]);
+  }, [logs, autoScroll, logLines.length]);
+
 
   // Listen for pod deletion events
   useEffect(() => {
@@ -380,7 +425,8 @@ export function PodDetailsView({ pod, onBack }: PodDetailsViewProps) {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "f" && activeTab === "logs") {
         e.preventDefault();
         setLogSearchVisible(true);
-        setTimeout(() => logSearchInputRef.current?.focus(), 50);
+        if (focusTimeoutRef.current) clearTimeout(focusTimeoutRef.current);
+        focusTimeoutRef.current = setTimeout(() => logSearchInputRef.current?.focus(), 50);
       }
       if (e.key.toLowerCase() === "d" && !isDeleted && !showDeleteConfirm) {
         const target = e.target as HTMLElement;
@@ -404,6 +450,13 @@ export function PodDetailsView({ pod, onBack }: PodDetailsViewProps) {
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [onBack, isDeleted, showDeleteConfirm, logSearchVisible, activeTab]);
+
+  // Clean up focus timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (focusTimeoutRef.current) clearTimeout(focusTimeoutRef.current);
+    };
+  }, []);
 
   const handleCopyLogs = async () => {
     try {
@@ -469,10 +522,15 @@ export function PodDetailsView({ pod, onBack }: PodDetailsViewProps) {
         idx = (idx - 1 + logSearchMatches.length) % logSearchMatches.length;
       }
       setLogSearchIndex(idx);
-      // Scroll to match
+      // Scroll to match using VirtualList
       const lineIndex = logSearchMatches[idx];
-      const el = logsContainerRef.current?.querySelector(`[data-line="${lineIndex}"]`);
-      el?.scrollIntoView({ behavior: "smooth", block: "center" });
+      if (virtualListRef.current) {
+        virtualListRef.current.scrollToRow({ index: lineIndex, align: "center" });
+      } else {
+        // Fallback for non-virtualized rendering
+        const el = logsContainerRef.current?.querySelector(`[data-line="${lineIndex}"]`);
+        el?.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
     },
     [logSearchMatches, logSearchIndex],
   );
@@ -724,48 +782,30 @@ export function PodDetailsView({ pod, onBack }: PodDetailsViewProps) {
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
                   exit={{ opacity: 0 }}
-                  className="h-full overflow-auto bg-black/40 border border-slate-800 rounded-lg m-4"
+                  className="h-full bg-black/40 border border-slate-800 rounded-lg m-4"
                 >
                   {loading && logs === "" ? (
                     <LogSkeleton />
                   ) : (
-                    <div ref={logsContainerRef} className="font-mono text-xs leading-relaxed">
+                    <div className="h-full font-mono text-xs leading-relaxed">
                       {logLines.length > 0 ? (
-                        logLines.map((line, i) => {
-                          const levelColor = getLogLevelColor(line);
-                          const isSearchMatch =
-                            logSearch && line.toLowerCase().includes(logSearch.toLowerCase());
-                          const isCurrentMatch =
-                            logSearchMatches.length > 0 && logSearchMatches[logSearchIndex] === i;
-
-                          return (
-                            <div
-                              key={i}
-                              data-line={i}
-                              className={cn(
-                                "flex hover:bg-white/[0.02] group",
-                                isCurrentMatch && "bg-amber-400/10",
-                                isSearchMatch && !isCurrentMatch && "bg-amber-400/5",
-                              )}
-                            >
-                              <span className="select-none text-right text-slate-600 w-12 shrink-0 pr-3 py-px border-r border-slate-800/50 group-hover:text-slate-500">
-                                {i + 1}
-                              </span>
-                              <span
-                                className={cn(
-                                  "pl-3 py-px whitespace-pre-wrap break-all flex-1",
-                                  levelColor || "text-green-400",
-                                )}
-                              >
-                                {logSearch ? highlightMatches(line, logSearch) : line}
-                              </span>
-                            </div>
-                          );
-                        })
+                        <VirtualList
+                          listRef={virtualListRef}
+                          rowCount={logLines.length}
+                          rowHeight={20}
+                          style={{ fontFamily: "inherit" }}
+                          overscanCount={20}
+                          rowComponent={LogRow}
+                          rowProps={{
+                            logLines,
+                            logSearch,
+                            logSearchMatches,
+                            logSearchIndex,
+                          }}
+                        />
                       ) : (
                         <div className="p-4 text-slate-500">No logs available</div>
                       )}
-                      <div ref={logsEndRef} />
                     </div>
                   )}
                 </motion.div>

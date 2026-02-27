@@ -86,6 +86,7 @@ export function MultiPodLogs({ namespace, labelSelector, onStop }: MultiPodLogsP
 
   const logsEndRef = useRef<HTMLDivElement>(null);
   const logsContainerRef = useRef<HTMLDivElement>(null);
+  const focusTimeoutRef = useRef<ReturnType<typeof setTimeout>>();
   const toast = useToast();
 
   // Collect unique pod names from entries
@@ -144,7 +145,13 @@ export function MultiPodLogs({ namespace, labelSelector, onStop }: MultiPodLogsP
         const unlisten = await listen<LogEntry>(eventName, (event) => {
           if (!isMounted) return;
           setLoading(false);
-          setLogEntries((prev) => [...prev, event.payload]);
+          setLogEntries((prev) => {
+            const next = [...prev, event.payload];
+            if (next.length > 10000) {
+              return next.slice(next.length - 10000);
+            }
+            return next;
+          });
         });
 
         if (!isMounted) {
@@ -193,12 +200,20 @@ export function MultiPodLogs({ namespace, labelSelector, onStop }: MultiPodLogsP
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "f") {
         e.preventDefault();
         setLogSearchVisible(true);
-        setTimeout(() => logSearchInputRef.current?.focus(), 50);
+        if (focusTimeoutRef.current) clearTimeout(focusTimeoutRef.current);
+        focusTimeoutRef.current = setTimeout(() => logSearchInputRef.current?.focus(), 50);
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [onStop, logSearchVisible]);
+
+  // Clean up focus timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (focusTimeoutRef.current) clearTimeout(focusTimeoutRef.current);
+    };
+  }, []);
 
   const navigateLogSearch = useCallback(
     (direction: "next" | "prev") => {

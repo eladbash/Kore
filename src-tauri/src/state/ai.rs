@@ -1,3 +1,4 @@
+use crate::constants::MAX_AI_RESPONSE_BYTES;
 use crate::error::{K8sError, Result};
 use crate::state::{K8sState, ResourceKind};
 use rand::Rng;
@@ -112,6 +113,7 @@ fn parse_resource_kind(kind: &str) -> Option<ResourceKind> {
         "ingress" | "ingresses" => Some(ResourceKind::Ingresses),
         "job" | "jobs" => Some(ResourceKind::Jobs),
         "cronjob" | "cronjobs" => Some(ResourceKind::Cronjobs),
+        "namespace" | "namespaces" => Some(ResourceKind::Namespaces),
         _ => None,
     }
 }
@@ -784,6 +786,84 @@ fn build_chat_system_prompt(context_name: Option<&str>, namespace: Option<&str>)
     )
 }
 
+/// Known tool names for validating text-parsed tool calls from Ollama.
+const KNOWN_TOOL_NAMES: &[&str] = &[
+    "list_resources",
+    "get_cluster_health",
+    "describe_resource",
+    "get_resource_events",
+    "get_pod_logs",
+    "get_pod_metrics",
+    "search_resources",
+    "list_namespaces",
+];
+
+/// Try to parse tool calls from plain text content.
+///
+/// Some Ollama models don't use the structured tool_calls field and instead
+/// output JSON like `{"name": "list_resources", "parameters": {"kind": "pods"}}`
+/// directly in the message content.
+fn parse_tool_calls_from_text(text: &str) -> Vec<ToolCall> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return vec![];
+    }
+
+    let mut calls = Vec::new();
+
+    // Try to find JSON objects in the text that look like tool calls.
+    // We scan for `{` and try to parse balanced JSON objects.
+    let bytes = trimmed.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'{' {
+            // Try to find the matching closing brace
+            let mut depth = 0;
+            let mut j = i;
+            while j < bytes.len() {
+                match bytes[j] {
+                    b'{' => depth += 1,
+                    b'}' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            // Try parsing this substring as JSON
+                            let candidate = &trimmed[i..=j];
+                            if let Ok(obj) = serde_json::from_str::<serde_json::Value>(candidate) {
+                                if let Some(name) = obj.get("name").and_then(|v| v.as_str()) {
+                                    if KNOWN_TOOL_NAMES.contains(&name) {
+                                        let arguments = obj
+                                            .get("parameters")
+                                            .or_else(|| obj.get("arguments"))
+                                            .cloned()
+                                            .unwrap_or(json!({}));
+                                        calls.push(ToolCall {
+                                            id: format!("ollama-text-{}", calls.len()),
+                                            name: name.to_string(),
+                                            arguments,
+                                        });
+                                    }
+                                }
+                            }
+                            i = j + 1;
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+                j += 1;
+            }
+            if depth != 0 {
+                // Unbalanced braces, skip this `{`
+                i += 1;
+            }
+        } else {
+            i += 1;
+        }
+    }
+
+    calls
+}
+
 /// Extract tool calls from a provider's non-streaming response body.
 fn extract_tool_calls(provider: &AIProvider, body: &serde_json::Value) -> Vec<ToolCall> {
     match provider {
@@ -822,7 +902,8 @@ fn extract_tool_calls(provider: &AIProvider, body: &serde_json::Value) -> Vec<To
         AIProvider::Ollama => {
             // Ollama: message.tool_calls[{function: {name, arguments}}]
             // arguments is already an object (not a JSON string)
-            body.pointer("/message/tool_calls")
+            let structured: Vec<ToolCall> = body
+                .pointer("/message/tool_calls")
                 .and_then(|v| v.as_array())
                 .map(|calls| {
                     calls
@@ -845,7 +926,19 @@ fn extract_tool_calls(provider: &AIProvider, body: &serde_json::Value) -> Vec<To
                         })
                         .collect()
                 })
-                .unwrap_or_default()
+                .unwrap_or_default();
+
+            if !structured.is_empty() {
+                return structured;
+            }
+
+            // Fallback: some Ollama models emit tool calls as JSON text in message.content
+            // instead of using the structured tool_calls field.
+            let text = body
+                .pointer("/message/content")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            parse_tool_calls_from_text(text)
         }
         AIProvider::Anthropic => {
             // Anthropic: content[{type: "tool_use", id, name, input}]
@@ -1057,8 +1150,80 @@ async fn run_chat_loop(
             return Ok(());
         }
 
-        // Process tool calls
-        // Add the assistant's response with tool calls to messages
+        // Check if Ollama tool calls came from text (not the structured field).
+        // Models that output tool calls as plain text don't understand the tool
+        // protocol, so we handle them differently.
+        let ollama_text_tools = matches!(config.provider, AIProvider::Ollama)
+            && body
+                .pointer("/message/tool_calls")
+                .and_then(|v| v.as_array())
+                .is_none_or(|a| a.is_empty());
+
+        // Execute each tool call and collect results
+        let mut tool_results: Vec<(String, String)> = Vec::new();
+        for tc in &tool_calls {
+            let status_msg = format!("Querying {}...", tc.name.replace('_', " "));
+            app.emit(
+                event_name,
+                &AIStreamEvent::Status {
+                    message: status_msg,
+                },
+            )?;
+
+            let result = match execute_tool(state, &tc.name, &tc.arguments).await {
+                Ok(val) => serde_json::to_string(&val).unwrap_or_else(|_| "{}".to_string()),
+                Err(e) => format!("{{\"error\": \"{}\"}}", e.replace('"', "'")),
+            };
+
+            tool_results.push((tc.name.clone(), result));
+        }
+
+        if ollama_text_tools {
+            // The model wrote tool calls as text — it doesn't support the tool protocol.
+            // Inject results as a user message with context and make a final call without tools.
+            messages.push(json!({"role": "assistant", "content": "Let me look that up."}));
+
+            let mut context_parts: Vec<String> = Vec::new();
+            for (name, result) in &tool_results {
+                // Truncate very large results to keep context manageable
+                let truncated = if result.len() > 8_000 {
+                    format!("{}...[truncated]", &result[..8_000])
+                } else {
+                    result.clone()
+                };
+                context_parts.push(format!(
+                    "## Result of {}\n```json\n{}\n```",
+                    name.replace('_', " "),
+                    truncated
+                ));
+            }
+            messages.push(json!({
+                "role": "user",
+                "content": format!(
+                    "Here is the live cluster data you requested. \
+                     Please analyze it and answer my original question.\n\n{}",
+                    context_parts.join("\n\n")
+                )
+            }));
+
+            // Make a final call WITHOUT tools to get a natural language answer
+            let final_body =
+                make_chat_api_call(&http, config, system_prompt, &messages, &[]).await?;
+            let final_text = extract_text_content(&config.provider, &final_body);
+
+            if !final_text.is_empty() {
+                for chunk in final_text.as_bytes().chunks(80) {
+                    let chunk_str = String::from_utf8_lossy(chunk).to_string();
+                    app.emit(event_name, &AIStreamEvent::Chunk { content: chunk_str })?;
+                    tokio::time::sleep(tokio::time::Duration::from_millis(15)).await;
+                }
+            }
+            app.emit(event_name, &AIStreamEvent::Done)?;
+            return Ok(());
+        }
+
+        // Standard path: model supports structured tool calling.
+        // Add the assistant's response with tool calls to messages.
         match config.provider {
             AIProvider::OpenAI => {
                 let assistant_msg = body
@@ -1068,7 +1233,6 @@ async fn run_chat_loop(
                 messages.push(assistant_msg);
             }
             AIProvider::Ollama => {
-                // Ollama: echo back the assistant message with tool_calls
                 let assistant_msg = body
                     .get("message")
                     .cloned()
@@ -1084,36 +1248,20 @@ async fn run_chat_loop(
             AIProvider::ClaudeCli | AIProvider::CursorAgent => {}
         }
 
-        // Execute each tool call
-        for tc in &tool_calls {
-            // Emit status to frontend
-            let status_msg = format!("Querying {}...", tc.name.replace('_', " "));
-            app.emit(
-                event_name,
-                &AIStreamEvent::Status {
-                    message: status_msg,
-                },
-            )?;
-
-            let result = match execute_tool(state, &tc.name, &tc.arguments).await {
-                Ok(val) => serde_json::to_string(&val).unwrap_or_else(|_| "{}".to_string()),
-                Err(e) => format!("{{\"error\": \"{}\"}}", e.replace('"', "'")),
-            };
-
-            // Add tool result to messages
+        // Add tool results to messages
+        for (i, (_name, result)) in tool_results.iter().enumerate() {
             match config.provider {
                 AIProvider::OpenAI => {
                     messages.push(json!({
                         "role": "tool",
-                        "tool_call_id": &tc.id,
-                        "content": &result
+                        "tool_call_id": &tool_calls[i].id,
+                        "content": result
                     }));
                 }
                 AIProvider::Ollama => {
-                    // Ollama: tool results don't use tool_call_id
                     messages.push(json!({
                         "role": "tool",
-                        "content": &result
+                        "content": result
                     }));
                 }
                 AIProvider::Anthropic => {
@@ -1121,8 +1269,8 @@ async fn run_chat_loop(
                         "role": "user",
                         "content": [{
                             "type": "tool_result",
-                            "tool_use_id": &tc.id,
-                            "content": &result
+                            "tool_use_id": &tool_calls[i].id,
+                            "content": result
                         }]
                     }));
                 }
@@ -1157,7 +1305,7 @@ async fn run_chat_claude_cli(
             app.emit(
                 event_name,
                 &AIStreamEvent::Status {
-                    message: "Gathering cluster health...".to_string(),
+                    message: "Thinking...".to_string(),
                 },
             )?;
             serde_json::to_string_pretty(&health).unwrap_or_default()
@@ -1710,10 +1858,25 @@ async fn stream_ai_response(
     use futures::StreamExt;
     let mut stream = response.bytes_stream();
     let mut buffer = String::new();
+    let mut total_bytes: usize = 0;
 
     while let Some(chunk_result) = stream.next().await {
         let chunk = chunk_result?;
         let text = String::from_utf8_lossy(&chunk);
+        total_bytes += chunk.len();
+
+        if total_bytes > MAX_AI_RESPONSE_BYTES {
+            app.emit(
+                event_name,
+                &AIStreamEvent::Error {
+                    message: format!(
+                        "AI response exceeded maximum size ({MAX_AI_RESPONSE_BYTES} bytes)"
+                    ),
+                },
+            )?;
+            break;
+        }
+
         buffer.push_str(&text);
 
         // Process complete lines from the buffer
@@ -1894,8 +2057,24 @@ async fn stream_claude_cli_response(
 
     let mut reader = BufReader::new(stdout).lines();
     let mut received_chunks = false;
+    let mut total_bytes: usize = 0;
 
     while let Some(line) = reader.next_line().await? {
+        total_bytes += line.len();
+
+        if total_bytes > MAX_AI_RESPONSE_BYTES {
+            app.emit(
+                event_name,
+                &AIStreamEvent::Error {
+                    message: format!(
+                        "AI response exceeded maximum size ({MAX_AI_RESPONSE_BYTES} bytes)"
+                    ),
+                },
+            )?;
+            let _ = child.kill().await;
+            break;
+        }
+
         let trimmed = line.trim();
         if trimmed.is_empty() {
             continue;
@@ -2037,7 +2216,7 @@ async fn run_chat_cursor_agent(
             app.emit(
                 event_name,
                 &AIStreamEvent::Status {
-                    message: "Gathering cluster health...".to_string(),
+                    message: "Thinking...".to_string(),
                 },
             )?;
             serde_json::to_string_pretty(&health).unwrap_or_default()
@@ -2111,8 +2290,24 @@ async fn stream_cursor_agent_response(
 
     let mut reader = BufReader::new(stdout).lines();
     let mut received_chunks = false;
+    let mut total_bytes: usize = 0;
 
     while let Some(line) = reader.next_line().await? {
+        total_bytes += line.len();
+
+        if total_bytes > MAX_AI_RESPONSE_BYTES {
+            app.emit(
+                event_name,
+                &AIStreamEvent::Error {
+                    message: format!(
+                        "AI response exceeded maximum size ({MAX_AI_RESPONSE_BYTES} bytes)"
+                    ),
+                },
+            )?;
+            let _ = child.kill().await;
+            break;
+        }
+
         let trimmed = line.trim();
         if trimmed.is_empty() {
             continue;

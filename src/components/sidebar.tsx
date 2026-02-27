@@ -11,6 +11,7 @@ import {
   FileText,
   Lock,
   Zap,
+  FolderOpen,
   Layers,
   LayoutDashboard,
   GitBranch,
@@ -66,6 +67,7 @@ const menuGroups: MenuGroup[] = [
     label: "Cluster",
     items: [
       { id: "nodes", label: "Nodes", icon: Cpu },
+      { id: "namespaces", label: "Namespaces", icon: FolderOpen },
       { id: "events", label: "Events", icon: Zap },
     ],
   },

@@ -53,7 +53,10 @@ async function aiDiagnose(_config: AIConfig, _request: DiagnoseRequest): Promise
 function loadAIConfig(): AIConfig {
   try {
     const stored = localStorage.getItem("kore-ai-config");
-    if (stored) return JSON.parse(stored) as AIConfig;
+    if (stored) {
+      const { api_key: _, ...config } = JSON.parse(stored);
+      return config as AIConfig;
+    }
   } catch {
     // ignore parse errors
   }
@@ -99,7 +102,8 @@ export function AIPanel({ open, onClose, resourceContext }: AIPanelProps) {
   // Focus input when panel opens
   useEffect(() => {
     if (open) {
-      setTimeout(() => inputRef.current?.focus(), 200);
+      const timer = setTimeout(() => inputRef.current?.focus(), 200);
+      return () => clearTimeout(timer);
     }
   }, [open]);
 
@@ -378,7 +382,7 @@ export function AIPanel({ open, onClose, resourceContext }: AIPanelProps) {
 
                   <div
                     className={cn(
-                      "relative group max-w-[85%] rounded-lg px-3 py-2 text-sm leading-relaxed",
+                      "relative group max-w-[85%] rounded-lg px-3 py-2 text-sm leading-relaxed overflow-hidden",
                       msg.role === "user"
                         ? "bg-accent/15 text-slate-100 rounded-br-sm"
                         : "bg-muted/60 text-slate-200 border border-slate-800/50 rounded-bl-sm",

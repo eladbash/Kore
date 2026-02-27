@@ -51,6 +51,7 @@ pub enum ResourceKind {
     Ingresses,
     Jobs,
     Cronjobs,
+    Namespaces,
 }
 
 pub(crate) struct StateInner {

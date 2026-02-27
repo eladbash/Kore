@@ -128,6 +128,9 @@ async fn list_resources_with_client(
         ResourceKind::Cronjobs => {
             list_ns::<k8s_openapi::api::batch::v1::CronJob>(client, namespace, &lp).await
         }
+        ResourceKind::Namespaces => {
+            list_all::<k8s_openapi::api::core::v1::Namespace>(client, &lp).await
+        }
     }
 }
 

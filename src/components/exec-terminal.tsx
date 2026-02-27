@@ -100,7 +100,7 @@ export function ExecTerminal({ namespace, podName, container }: ExecTerminalProp
 
         // Listen for stdout
         const stdoutEvent = `exec-stdout://${sessionId}`;
-        unlistenStdout = await listen<{ data: string }>(stdoutEvent, (event) => {
+        const unlStdout = await listen<{ data: string }>(stdoutEvent, (event) => {
           if (!isMounted) return;
           // Decode base64
           try {
@@ -110,10 +110,12 @@ export function ExecTerminal({ namespace, podName, container }: ExecTerminalProp
             term.write(event.payload.data);
           }
         });
+        if (!isMounted) { unlStdout(); return; }
+        unlistenStdout = unlStdout;
 
         // Listen for exit
         const exitEvent = `exec-exit://${sessionId}`;
-        unlistenExit = await listen<{ reason?: string; error?: string }>(exitEvent, (event) => {
+        const unlExit = await listen<{ reason?: string; error?: string }>(exitEvent, (event) => {
           if (!isMounted) return;
           if (event.payload.error) {
             setError(event.payload.error);
@@ -124,6 +126,8 @@ export function ExecTerminal({ namespace, podName, container }: ExecTerminalProp
             term.write("\r\n\x1b[33mSession ended.\x1b[0m\r\n");
           }
         });
+        if (!isMounted) { unlExit(); unlStdout(); return; }
+        unlistenExit = unlExit;
       } catch (err) {
         if (!isMounted) return;
         setError(String(err));

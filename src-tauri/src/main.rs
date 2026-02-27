@@ -18,26 +18,24 @@ fn enrich_path() {
         "/opt/homebrew/bin",
         "/opt/homebrew/sbin",
         "/usr/local/sbin",
-        // Common install locations for cloud CLIs
         "/usr/local/aws-cli",
         "/Library/Frameworks/Python.framework/Versions/Current/bin",
     ];
     let current = std::env::var("PATH").unwrap_or_default();
-    let mut paths: Vec<&str> = current.split(':').collect();
+    let mut paths: Vec<String> = current.split(':').map(|s| s.to_string()).collect();
     for dir in &extra_dirs {
-        if !paths.contains(dir) && std::path::Path::new(dir).is_dir() {
-            paths.push(dir);
+        if !paths.iter().any(|p| p == dir) && std::path::Path::new(dir).is_dir() {
+            paths.push(dir.to_string());
         }
     }
-    // Also try to source the user's shell PATH
     if let Ok(home) = std::env::var("HOME") {
         let shell_paths = [
             format!("{home}/.local/bin"),
             format!("{home}/bin"),
         ];
         for dir in &shell_paths {
-            if !paths.contains(&dir.as_str()) && std::path::Path::new(dir).is_dir() {
-                paths.push(dir.as_str().to_owned().leak());
+            if !paths.iter().any(|p| p == dir) && std::path::Path::new(dir).is_dir() {
+                paths.push(dir.clone());
             }
         }
     }
@@ -125,6 +123,10 @@ fn main() {
             cursor_agent_available,
             list_cursor_agent_models,
             check_providers_availability,
+            // Secure key storage
+            store_api_key,
+            get_api_key,
+            delete_api_key,
             // Favorites persistence
             load_favorites,
             save_favorites,

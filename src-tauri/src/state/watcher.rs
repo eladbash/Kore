@@ -155,6 +155,15 @@ impl K8sState {
                 )
                 .await?
             }
+            ResourceKind::Namespaces => {
+                self.watch_cluster_scoped::<k8s_openapi::api::core::v1::Namespace>(
+                    app,
+                    "namespaces",
+                    new_token,
+                    label_selector,
+                )
+                .await?
+            }
         }
         Ok(())
     }

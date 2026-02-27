@@ -506,6 +506,21 @@ export function ResourceTable({
           sortingFn: ageSortingFn,
         },
       ];
+    } else if (kind === "namespaces") {
+      cols = [
+        { accessorKey: "name", header: "Name" },
+        {
+          accessorKey: "status",
+          header: "Status",
+          cell: ({ getValue }) => <StatusBadge status={getValue() as string} />,
+        },
+        {
+          accessorKey: "age",
+          header: "Age",
+          cell: ({ getValue }) => formatRelativeAge(getValue() as string),
+          sortingFn: ageSortingFn,
+        },
+      ];
     } else {
       // Pods (default)
       cols = [
@@ -597,7 +612,7 @@ export function ResourceTable({
     }
 
     return cols;
-  }, [kind, onRowAction, handleAction, onTogglePin, isPinned, getRestartHistory, multiCluster]);
+  }, [kind, onRowAction, handleAction, onTogglePin, getRestartHistory, multiCluster]);
 
   const table = useReactTable({
     data,

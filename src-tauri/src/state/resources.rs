@@ -1,3 +1,4 @@
+use crate::constants::{MAX_LIST_RESOURCES, MAX_SEARCH_RESULTS};
 use crate::error::{K8sError, Result};
 use crate::state::{K8sState, ResourceKind};
 use kube::api::{Api, DeleteParams, ListParams, Resource, ResourceExt};
@@ -55,6 +56,10 @@ impl K8sState {
                 self.list_typed::<k8s_openapi::api::batch::v1::CronJob>(namespace, label_selector)
                     .await
             }
+            ResourceKind::Namespaces => {
+                self.list_cluster_scoped::<k8s_openapi::api::core::v1::Namespace>(label_selector)
+                    .await
+            }
         }
     }
 
@@ -81,7 +86,7 @@ impl K8sState {
             None => Api::all(client),
         };
 
-        let mut lp = ListParams::default();
+        let mut lp = ListParams::default().limit(MAX_LIST_RESOURCES);
         if let Some(labels) = label_selector {
             lp = lp.labels(&labels);
         }
@@ -117,7 +122,7 @@ impl K8sState {
         let client = self.current_client().await?;
         let api: Api<K> = Api::all(client);
 
-        let mut lp = ListParams::default();
+        let mut lp = ListParams::default().limit(MAX_LIST_RESOURCES);
         if let Some(labels) = label_selector {
             lp = lp.labels(&labels);
         }
@@ -190,6 +195,10 @@ impl K8sState {
             ResourceKind::Cronjobs => {
                 let api: Api<k8s_openapi::api::batch::v1::CronJob> =
                     Api::namespaced(client, &namespace);
+                api.delete(&name, &dp).await.map_err(K8sError::Kube)?;
+            }
+            ResourceKind::Namespaces => {
+                let api: Api<k8s_openapi::api::core::v1::Namespace> = Api::all(client);
                 api.delete(&name, &dp).await.map_err(K8sError::Kube)?;
             }
         }
@@ -268,6 +277,11 @@ impl K8sState {
             ResourceKind::Cronjobs => {
                 let api: Api<k8s_openapi::api::batch::v1::CronJob> =
                     Api::namespaced(client, &namespace);
+                let obj = api.get(&name).await.map_err(K8sError::Kube)?;
+                serde_json::to_value(obj).map_err(K8sError::Serde)
+            }
+            ResourceKind::Namespaces => {
+                let api: Api<k8s_openapi::api::core::v1::Namespace> = Api::all(client);
                 let obj = api.get(&name).await.map_err(K8sError::Kube)?;
                 serde_json::to_value(obj).map_err(K8sError::Serde)
             }
@@ -365,7 +379,7 @@ impl K8sState {
         let query_lower = query.to_lowercase();
 
         // List all resource types in parallel
-        let (pods, deployments, services, configmaps, secrets, jobs, cronjobs, ingresses) = tokio::join!(
+        let (pods, deployments, services, configmaps, secrets, jobs, cronjobs, ingresses, namespaces) = tokio::join!(
             self.list_resources(ResourceKind::Pods, namespace.clone(), None),
             self.list_resources(ResourceKind::Deployments, namespace.clone(), None),
             self.list_resources(ResourceKind::Services, namespace.clone(), None),
@@ -374,6 +388,7 @@ impl K8sState {
             self.list_resources(ResourceKind::Jobs, namespace.clone(), None),
             self.list_resources(ResourceKind::Cronjobs, namespace.clone(), None),
             self.list_resources(ResourceKind::Ingresses, namespace.clone(), None),
+            self.list_resources(ResourceKind::Namespaces, None, None),
         );
 
         let mut results = Vec::new();
@@ -387,6 +402,7 @@ impl K8sState {
             ("jobs", jobs),
             ("cronjobs", cronjobs),
             ("ingresses", ingresses),
+            ("namespaces", namespaces),
         ];
 
         for (kind_name, items_result) in kinds_and_items {
@@ -408,6 +424,8 @@ impl K8sState {
                 }
             }
         }
+
+        results.truncate(MAX_SEARCH_RESULTS);
 
         Ok(results)
     }

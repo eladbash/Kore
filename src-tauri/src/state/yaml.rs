@@ -1,3 +1,4 @@
+use crate::constants::MAX_YAML_INPUT_BYTES;
 use crate::error::{K8sError, Result};
 use crate::state::{K8sState, ResourceKind};
 use kube::api::{Api, Patch, PatchParams};
@@ -40,6 +41,14 @@ impl K8sState {
         name: String,
         yaml_content: String,
     ) -> Result<String> {
+        if yaml_content.len() > MAX_YAML_INPUT_BYTES {
+            return Err(K8sError::Validation(format!(
+                "YAML input too large ({} bytes, max {})",
+                yaml_content.len(),
+                MAX_YAML_INPUT_BYTES
+            )));
+        }
+
         let value: serde_json::Value = serde_yaml::from_str(&yaml_content)
             .map_err(|e| K8sError::Validation(format!("Invalid YAML: {e}")))?;
 
@@ -98,6 +107,12 @@ impl K8sState {
             ResourceKind::Cronjobs => {
                 let api: Api<k8s_openapi::api::batch::v1::CronJob> =
                     Api::namespaced(client, &namespace);
+                api.patch(&name, &pp, &Patch::Apply(&value))
+                    .await
+                    .map_err(K8sError::Kube)?;
+            }
+            ResourceKind::Namespaces => {
+                let api: Api<k8s_openapi::api::core::v1::Namespace> = Api::all(client);
                 api.patch(&name, &pp, &Patch::Apply(&value))
                     .await
                     .map_err(K8sError::Kube)?;

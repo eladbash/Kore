@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   listContexts,
   listNamespaces,
@@ -20,21 +20,27 @@ export function useK8sContext() {
   const [namespaces, setNamespaces] = useState<string[]>(DEFAULT_NAMESPACES);
   const [namespace, setNamespace] = useState<string>("default");
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus | null>(null);
+  const contextSwitchSeqRef = useRef(0);
 
   const handleContextChange = useCallback(async (newContext: string) => {
+    const seq = ++contextSwitchSeqRef.current;
     setNamespaces([]);
 
     try {
       await switchContext(newContext);
+      if (seq !== contextSwitchSeqRef.current) return; // stale
       setCurrentContext(newContext);
       // Update connection status on successful switch
       const status = await getConnectionStatus();
+      if (seq !== contextSwitchSeqRef.current) return; // stale
       setConnectionStatus(status);
     } catch (err) {
+      if (seq !== contextSwitchSeqRef.current) return; // stale
       console.error("Failed to switch context", err);
       // Refresh connection status to reflect the error
       try {
         const status = await getConnectionStatus();
+        if (seq !== contextSwitchSeqRef.current) return; // stale
         setConnectionStatus(status);
       } catch {
         // ignore

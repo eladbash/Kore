@@ -85,6 +85,8 @@ body::before {
 
 .ai-markdown {
   @apply text-sm leading-relaxed text-slate-200;
+  min-width: 0;
+  overflow-wrap: break-word;
 }
 
 .ai-markdown > *:first-child {
@@ -170,7 +172,8 @@ body::before {
 }
 
 .ai-markdown table {
-  @apply my-3 w-full text-xs border-collapse;
+  @apply my-3 w-full text-xs border-collapse overflow-x-auto;
+  display: block;
 }
 
 .ai-markdown thead {

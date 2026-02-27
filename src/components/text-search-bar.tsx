@@ -23,7 +23,8 @@ export function TextSearchBar({
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    setTimeout(() => inputRef.current?.focus(), 50);
+    const timer = setTimeout(() => inputRef.current?.focus(), 50);
+    return () => clearTimeout(timer);
   }, []);
 
   // Handle Escape in capture phase to prevent parent handlers from firing

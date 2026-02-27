@@ -122,7 +122,8 @@ impl K8sState {
                                     &event_name,
                                     &json!({ "logs": log_line, "append": append }),
                                 ) {
-                                    error!(error = %e, "Failed to emit log line");
+                                    warn!(error = %e, "Frontend listener gone, stopping log stream");
+                                    break;
                                 }
                             }
                             Some(Err(err)) => {

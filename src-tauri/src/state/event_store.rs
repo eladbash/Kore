@@ -36,6 +36,9 @@ impl EventStore {
         let conn = Connection::open(&db_path)
             .map_err(|e| K8sError::Validation(format!("SQLite open failed: {e}")))?;
 
+        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;")
+            .map_err(|e| K8sError::Validation(format!("SQLite pragma failed: {e}")))?;
+
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS events (
                 uid TEXT PRIMARY KEY,

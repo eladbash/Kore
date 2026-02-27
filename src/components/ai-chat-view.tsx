@@ -46,7 +46,10 @@ interface AIChatViewProps {
 function loadAIConfig(): AIConfig {
   try {
     const stored = localStorage.getItem("kore-ai-config");
-    if (stored) return JSON.parse(stored) as AIConfig;
+    if (stored) {
+      const { api_key: _, ...config } = JSON.parse(stored);
+      return config as AIConfig;
+    }
   } catch {
     // ignore
   }
@@ -351,7 +354,7 @@ export function AIChatView({ namespace }: AIChatViewProps) {
 
                 <div
                   className={cn(
-                    "relative group max-w-[85%] rounded-xl px-4 py-3 text-sm leading-relaxed",
+                    "relative group max-w-[85%] rounded-xl px-4 py-3 text-sm leading-relaxed overflow-hidden",
                     msg.role === "user"
                       ? "bg-accent/15 text-slate-100 rounded-br-sm"
                       : "bg-surface border border-slate-800/50 text-slate-200 rounded-bl-sm",

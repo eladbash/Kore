@@ -8,7 +8,8 @@ export type ResourceKind =
   | "secrets"
   | "ingresses"
   | "jobs"
-  | "cronjobs";
+  | "cronjobs"
+  | "namespaces";
 
 export type AppView =
   | "table"

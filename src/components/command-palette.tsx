@@ -12,6 +12,7 @@ import {
   Timer,
   Calendar,
   Zap,
+  FolderOpen,
   Search,
   Clock,
   ArrowRight,
@@ -48,6 +49,7 @@ const RESOURCE_KINDS: { id: ResourceKind; label: string; icon: typeof Boxes }[] 
   { id: "secrets", label: "Secrets", icon: Lock },
   { id: "ingresses", label: "Ingresses", icon: Globe },
   { id: "events", label: "Events", icon: Zap },
+  { id: "namespaces", label: "Namespaces", icon: FolderOpen },
 ];
 
 const RECENT_KEY = "kore-recent-resources";

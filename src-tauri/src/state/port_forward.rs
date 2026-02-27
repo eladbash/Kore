@@ -129,7 +129,7 @@ async fn run_port_forward(
         namespace = %namespace,
         pod = %pod_name,
         port = pod_port,
-        local_addr = %listener.local_addr().unwrap(),
+        local_addr = %listener.local_addr().map(|a| a.to_string()).unwrap_or_else(|_| "unknown".to_string()),
         "Port forward listening"
     );
 
@@ -212,8 +212,8 @@ async fn handle_port_forward_connection(
             ))
         })?;
 
-    // Wait for kubectl to establish the connection
-    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+    // Wait briefly for kubectl to establish the connection
+    tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
 
     // Check if kubectl is still running
     if let Ok(Some(status)) = kubectl.try_wait() {
@@ -243,7 +243,9 @@ async fn handle_port_forward_connection(
             Err(_) => {
                 // Check if kubectl died
                 if let Ok(Some(_status)) = kubectl.try_wait() {
-                    let _ = kubectl.kill().await;
+                    if let Err(e) = kubectl.kill().await {
+                        warn!(error = %e, "Failed to kill kubectl process");
+                    }
                     return Err(K8sError::PortForward(
                         "kubectl port-forward process exited unexpectedly".to_string(),
                     ));
@@ -256,7 +258,9 @@ async fn handle_port_forward_connection(
     let kubectl_stream = match kubectl_stream {
         Some(s) => s,
         None => {
-            let _ = kubectl.kill().await;
+            if let Err(e) = kubectl.kill().await {
+                warn!(error = %e, "Failed to kill kubectl process");
+            }
             return Err(K8sError::PortForward(format!(
                 "Failed to connect to kubectl bridge on {temp_addr} after {MAX_KUBECTL_CONNECT_RETRIES} retries"
             )));
@@ -325,7 +329,9 @@ async fn handle_port_forward_connection(
     }
 
     // Clean up kubectl process
-    let _ = kubectl.kill().await;
+    if let Err(e) = kubectl.kill().await {
+        warn!(error = %e, "Failed to kill kubectl process");
+    }
 
     debug!("Port forward connection closed");
 

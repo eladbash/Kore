@@ -177,7 +177,7 @@ export default function App() {
   const handleRowSelect = useCallback(
     (row: ResourceItem) => {
       setSelected(row);
-      if (row.name && (row.namespace || kind === "nodes" || kind === "events")) {
+      if (row.name && (row.namespace || kind === "nodes" || kind === "events" || kind === "namespaces")) {
         setViewMode("details");
       }
     },
