@@ -52,6 +52,7 @@ fn main() {
         .init();
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_shell::init())
         .setup(|app| {
             let state = tauri::async_runtime::block_on(K8sState::new());
             app.manage(state);

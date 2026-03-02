@@ -24,6 +24,7 @@ import {
   Sparkles,
   Filter,
   MessageCircle,
+  Heart,
 } from "lucide-react";
 import { searchResources } from "@/lib/api";
 import { toResourceItem } from "@/lib/transforms";
@@ -319,6 +320,25 @@ export function CommandPalette({
                       <span>Ask AI</span>
                       <span className="text-[10px] text-slate-500 ml-auto">
                         Troubleshoot with AI
+                      </span>
+                    </Command.CommandItem>
+                    <Command.CommandItem
+                      value="action-sponsor"
+                      onSelect={async () => {
+                        try {
+                          const { open } = await import("@tauri-apps/plugin-shell");
+                          await open("https://github.com/sponsors/eladbash");
+                        } catch {
+                          window.open("https://github.com/sponsors/eladbash", "_blank");
+                        }
+                        onClose();
+                      }}
+                      className="px-3 py-2 cursor-pointer rounded-md hover:bg-muted/60 text-sm text-slate-200 transition flex items-center gap-3"
+                    >
+                      <Heart className="w-4 h-4 text-pink-400" />
+                      <span>Sponsor Kore</span>
+                      <span className="text-[10px] text-slate-500 ml-auto">
+                        Support on GitHub Sponsors
                       </span>
                     </Command.CommandItem>
                   </Command.CommandGroup>

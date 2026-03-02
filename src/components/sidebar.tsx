@@ -20,6 +20,7 @@ import {
   Settings,
   Star,
   MessageCircle,
+  Heart,
 } from "lucide-react";
 import { motion } from "framer-motion";
 import type { ResourceKind, AppView } from "@/lib/types";
@@ -292,17 +293,33 @@ export function Sidebar({
               Command Palette
             </span>
           </div>
-          <button
-            onClick={() => onViewChange?.("settings")}
-            className={cn(
-              "p-1.5 rounded-md transition",
-              currentView === "settings"
-                ? "text-accent bg-accent/10"
-                : "text-slate-500 hover:text-slate-300 hover:bg-muted/30",
-            )}
-          >
-            <Settings className="w-4 h-4" />
-          </button>
+          <div className="flex items-center gap-1">
+            <button
+              title="Sponsor Kore"
+              onClick={async () => {
+                try {
+                  const { open } = await import("@tauri-apps/plugin-shell");
+                  await open("https://github.com/sponsors/eladbash");
+                } catch {
+                  window.open("https://github.com/sponsors/eladbash", "_blank");
+                }
+              }}
+              className="p-1.5 rounded-md transition text-slate-500 hover:text-pink-400 hover:bg-pink-500/10"
+            >
+              <Heart className="w-4 h-4" />
+            </button>
+            <button
+              onClick={() => onViewChange?.("settings")}
+              className={cn(
+                "p-1.5 rounded-md transition",
+                currentView === "settings"
+                  ? "text-accent bg-accent/10"
+                  : "text-slate-500 hover:text-slate-300 hover:bg-muted/30",
+              )}
+            >
+              <Settings className="w-4 h-4" />
+            </button>
+          </div>
         </div>
       </div>
     </aside>
