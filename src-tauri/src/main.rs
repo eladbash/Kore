@@ -121,6 +121,13 @@ fn main() {
             cursor_agent_available,
             list_cursor_agent_models,
             check_providers_availability,
+            // Network policies
+            build_network_policy_graph,
+            simulate_network_traffic,
+            // Debug containers
+            add_debug_container,
+            list_debug_containers,
+            stop_debug_container,
             // Secure key storage
             store_api_key,
             get_api_key,

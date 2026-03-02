@@ -1,6 +1,7 @@
 pub mod ai;
 pub mod crd;
 pub mod dashboard;
+pub mod debug;
 pub mod event_store;
 pub mod exec;
 pub mod graph;
@@ -9,6 +10,7 @@ pub mod logs;
 pub mod metrics;
 pub mod multi_cluster;
 pub mod multi_logs;
+pub mod network_policy;
 pub mod port_forward;
 pub mod resources;
 pub mod rollback;
