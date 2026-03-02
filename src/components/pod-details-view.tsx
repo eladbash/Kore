@@ -11,13 +11,14 @@ import {
   Search,
   ChevronUp,
   ChevronDown,
+  ChevronRight,
   X,
   Bug,
+  Plug,
 } from "lucide-react";
 import {
   deleteResource,
   describePod,
-  getResourceYaml,
   listDebugContainers,
   startPodLogsStream,
   stopDebugContainer,
@@ -245,6 +246,9 @@ export function PodDetailsView({ pod, onBack }: PodDetailsViewProps) {
   const [debugContainer, setDebugContainer] = useState<{ name: string; image: string } | undefined>(undefined);
   const [stoppingDebug, setStoppingDebug] = useState(false);
   const [isStaticPod, setIsStaticPod] = useState(false);
+  const [showPodInfo, setShowPodInfo] = useState(false);
+  const [showPortForward, setShowPortForward] = useState(false);
+  const [activePortForwards, setActivePortForwards] = useState(0);
 
   const logsContainerRef = useRef<HTMLDivElement>(null);
   const virtualListRef = useRef<ListImperativeAPI>(null);
@@ -458,11 +462,15 @@ export function PodDetailsView({ pod, onBack }: PodDetailsViewProps) {
           setShowDeleteConfirm(true);
         }
       }
-      if (e.key.toLowerCase() === "b" && !isDeleted && !isStaticPod && !showDeleteConfirm && !showDebugModal) {
+      if (e.key.toLowerCase() === "b" && !isDeleted && !showDeleteConfirm && !showDebugModal) {
         const target = e.target as HTMLElement;
         if (target.tagName !== "INPUT" && target.tagName !== "TEXTAREA") {
           e.preventDefault();
-          setShowDebugModal(true);
+          if (debugContainer) {
+            handleStopDebug();
+          } else if (!isStaticPod) {
+            setShowDebugModal(true);
+          }
         }
       }
       // Number key tab switching (1-6)
@@ -513,16 +521,6 @@ export function PodDetailsView({ pod, onBack }: PodDetailsViewProps) {
     toast("Logs downloaded", "success");
   };
 
-  const handleCopyYaml = async () => {
-    try {
-      const yaml = await getResourceYaml("pods", namespace, podName);
-      await navigator.clipboard.writeText(yaml);
-      toast("YAML copied to clipboard", "success");
-    } catch (err) {
-      console.error("Failed to copy YAML", err);
-      toast("Failed to copy YAML", "error");
-    }
-  };
 
   const handleDelete = async () => {
     if (!podName || !namespace || isDeleted) return;
@@ -547,6 +545,21 @@ export function PodDetailsView({ pod, onBack }: PodDetailsViewProps) {
     setShowDebugModal(false);
     setActiveTab("shell");
     toast(`Debug container "${containerName}" is ready`, "success");
+  };
+
+  const handleStopDebug = async () => {
+    const dc = debugContainer;
+    if (!dc) return;
+    setStoppingDebug(true);
+    try {
+      await stopDebugContainer(namespace, podName, dc.name);
+      setDebugContainer(undefined);
+      toast("Debug container stopped", "success");
+    } catch (err) {
+      toast(`Failed to stop debug container: ${formatError(err)}`, "error");
+    } finally {
+      setStoppingDebug(false);
+    }
   };
 
   const navigateLogSearch = useCallback(
@@ -591,168 +604,152 @@ export function PodDetailsView({ pod, onBack }: PodDetailsViewProps) {
       {/* Main Content */}
       <div className="flex-1 flex flex-col min-w-0">
         {/* Header */}
-        <div className="border-b border-slate-800 p-4 bg-surface/50">
-          <div className="flex items-center justify-between mb-4">
+        <div className="border-b border-slate-800 bg-surface/50">
+          <div className="flex items-center gap-3 px-4 py-2.5">
+            {/* Left: Back button */}
             <button
               onClick={onBack}
               aria-label="Go back to resource list"
-              className="flex items-center gap-2 px-3 py-1.5 rounded-md border border-slate-800 hover:border-accent/50 hover:bg-muted/30 transition text-sm text-slate-300"
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-slate-800 hover:border-accent/50 hover:bg-muted/30 transition text-sm text-slate-300 shrink-0"
             >
-              <ArrowLeft className="w-4 h-4" />
-              Back
+              <ArrowLeft className="w-3.5 h-3.5" />
               <Kbd>Esc</Kbd>
             </button>
-            <div className="flex items-center gap-2">
-              {!isDeleted && (
-                <>
-                  <button
-                    onClick={handleCopyYaml}
-                    aria-label="Copy pod YAML to clipboard"
-                    className="flex items-center gap-2 px-3 py-1.5 rounded-md border border-slate-800 hover:border-accent/50 hover:bg-muted/30 transition text-sm text-slate-300"
-                  >
-                    <Copy className="w-4 h-4" />
-                    Copy YAML
-                  </button>
-                  <button
-                    onClick={() => !isStaticPod && setShowDebugModal(true)}
-                    disabled={isStaticPod}
-                    title={isStaticPod ? "Static pods do not support ephemeral debug containers" : undefined}
-                    aria-label="Debug container"
-                    className={cn(
-                      "flex items-center gap-2 px-3 py-1.5 rounded-md border transition text-sm",
-                      isStaticPod
+
+            {/* Center: Pod name + status */}
+            <div className="flex items-center gap-2.5 min-w-0 flex-1">
+              <span className="text-slate-100 font-mono text-sm truncate">{podName}</span>
+              <StatusBadge status={status} />
+              <button
+                onClick={() => setShowPodInfo(!showPodInfo)}
+                className="flex items-center gap-1 text-xs text-slate-500 hover:text-slate-300 transition shrink-0"
+                aria-label={showPodInfo ? "Hide pod details" : "Show pod details"}
+              >
+                <motion.span
+                  animate={{ rotate: showPodInfo ? 90 : 0 }}
+                  transition={{ duration: 0.15 }}
+                  className="inline-flex"
+                >
+                  <ChevronRight className="w-3.5 h-3.5" />
+                </motion.span>
+                <span className="hidden sm:inline">details</span>
+              </button>
+            </div>
+
+            {/* Right: Pod-level actions */}
+            {!isDeleted && (
+              <div className="flex items-center gap-1.5 shrink-0">
+                <button
+                  onClick={() => {
+                    if (debugContainer) {
+                      handleStopDebug();
+                    } else if (!isStaticPod) {
+                      setShowDebugModal(true);
+                    }
+                  }}
+                  disabled={isStaticPod && !debugContainer}
+                  title={
+                    debugContainer
+                      ? `Stop debug container "${debugContainer.name}"`
+                      : isStaticPod
+                        ? "Static pods do not support ephemeral debug containers"
+                        : "Debug container"
+                  }
+                  aria-label={debugContainer ? "Stop debug container" : "Debug container"}
+                  className={cn(
+                    "flex items-center gap-1.5 px-2.5 py-1 rounded-md border transition text-sm",
+                    debugContainer
+                      ? "border-emerald-500/50 bg-emerald-500/15 text-emerald-400"
+                      : isStaticPod
                         ? "border-slate-800 text-slate-600 cursor-not-allowed"
                         : "border-accent/30 hover:border-accent/50 hover:bg-accent/15 text-accent",
-                    )}
-                  >
-                    <Bug className="w-4 h-4" />
-                    Debug
-                    <Kbd>B</Kbd>
-                  </button>
-                  <button
-                    onClick={() => setShowDeleteConfirm(true)}
-                    disabled={isDeleting}
-                    aria-label="Delete pod"
-                    className="flex items-center gap-2 px-3 py-1.5 rounded-md border border-red-800/50 hover:border-red-600 hover:bg-red-500/15 transition text-sm text-red-400 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                    Delete
-                    <Kbd>D</Kbd>
-                  </button>
-                </>
-              )}
-              {activeTab === "logs" && (
-                <>
-                  {/* Container selector */}
-                  {containers.length > 1 && (
-                    <select
-                      value={selectedContainer || ""}
-                      onChange={(e) => setSelectedContainer(e.target.value || undefined)}
-                      className="px-2 py-1.5 rounded-md border border-slate-800 bg-surface/60 text-xs text-slate-300 outline-none"
-                    >
-                      <option value="">All containers</option>
-                      {containers.map((c) => (
-                        <option key={c} value={c}>
-                          {c}
-                        </option>
-                      ))}
-                    </select>
                   )}
-                  {/* Previous toggle */}
-                  <label className="flex items-center gap-2 px-3 py-1.5 rounded-md border border-slate-800 hover:border-accent/50 hover:bg-muted/30 transition text-sm cursor-pointer text-slate-300">
-                    <input
-                      type="checkbox"
-                      checked={showPrevious}
-                      onChange={(e) => setShowPrevious(e.target.checked)}
-                      className="w-3.5 h-3.5"
-                    />
-                    Previous
-                  </label>
-                  <button
-                    onClick={handleCopyLogs}
-                    aria-label="Copy logs to clipboard"
-                    className="flex items-center gap-2 px-3 py-1.5 rounded-md border border-slate-800 hover:border-accent/50 hover:bg-muted/30 transition text-sm text-slate-300"
-                  >
-                    <Copy className="w-4 h-4" />
-                    Copy
-                  </button>
-                  <button
-                    onClick={handleDownloadLogs}
-                    aria-label="Download logs as file"
-                    className="flex items-center gap-2 px-3 py-1.5 rounded-md border border-slate-800 hover:border-accent/50 hover:bg-muted/30 transition text-sm text-slate-300"
-                  >
-                    <Download className="w-4 h-4" />
-                    Download
-                  </button>
-                  <label className="flex items-center gap-2 px-3 py-1.5 rounded-md border border-slate-800 hover:border-accent/50 hover:bg-muted/30 transition text-sm cursor-pointer text-slate-300">
-                    <input
-                      type="checkbox"
-                      checked={autoScroll}
-                      onChange={(e) => setAutoScroll(e.target.checked)}
-                      className="w-3.5 h-3.5"
-                    />
-                    Auto-scroll
-                  </label>
-                </>
-              )}
-            </div>
+                >
+                  <Bug className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">{debugContainer ? "Stop Debug" : "Debug"}</span>
+                  {debugContainer ? (
+                    <span className="relative flex h-2 w-2">
+                      <span className="absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75 animate-ping" />
+                      <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-400" />
+                    </span>
+                  ) : (
+                    <Kbd>B</Kbd>
+                  )}
+                </button>
+                <button
+                  onClick={() => setShowDeleteConfirm(true)}
+                  disabled={isDeleting}
+                  aria-label="Delete pod"
+                  className="flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-red-800/50 hover:border-red-600 hover:bg-red-500/15 transition text-sm text-red-400 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Delete</span>
+                  <Kbd>D</Kbd>
+                </button>
+                <button
+                  onClick={() => setShowPortForward(!showPortForward)}
+                  aria-label={showPortForward ? "Hide port forwarding" : "Show port forwarding"}
+                  className={cn(
+                    "flex items-center gap-1.5 px-2.5 py-1 rounded-md border transition text-sm relative",
+                    activePortForwards > 0
+                      ? "border-emerald-500/50 bg-emerald-500/15 text-emerald-400"
+                      : showPortForward
+                        ? "border-accent/50 bg-accent/15 text-accent"
+                        : "border-slate-800 hover:border-accent/50 hover:bg-muted/30 text-slate-300",
+                  )}
+                >
+                  <Plug className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Ports</span>
+                  {activePortForwards > 0 && (
+                    <span className="relative flex h-2 w-2">
+                      <span className="absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75 animate-ping" />
+                      <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-400" />
+                    </span>
+                  )}
+                </button>
+              </div>
+            )}
           </div>
 
-          {/* Pod Info */}
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-4 text-sm">
-            <div>
-              <div className="text-slate-500 text-[10px] uppercase tracking-wider mb-1">Name</div>
-              <div className="text-slate-100 font-mono text-xs">{podName}</div>
-            </div>
-            <div>
-              <div className="text-slate-500 text-[10px] uppercase tracking-wider mb-1">
-                Namespace
-              </div>
-              <div className="text-slate-100 font-mono text-xs">{namespace}</div>
-            </div>
-            <div>
-              <div className="text-slate-500 text-[10px] uppercase tracking-wider mb-1">Status</div>
-              <StatusBadge status={status} />
-            </div>
-            <div>
-              <div className="text-slate-500 text-[10px] uppercase tracking-wider mb-1">Node</div>
-              <div className="text-slate-100 font-mono text-xs">{node}</div>
-            </div>
-            <div>
-              <div className="text-slate-500 text-[10px] uppercase tracking-wider mb-1">IP</div>
-              <div className="text-slate-100 font-mono text-xs">{ip}</div>
-            </div>
-          </div>
+          {/* Collapsible Pod Info */}
+          <AnimatePresence>
+            {showPodInfo && (
+              <motion.div
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: "auto", opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                transition={{ duration: 0.15 }}
+                className="overflow-hidden"
+              >
+                <div className="flex items-center gap-6 px-4 py-2 border-t border-slate-800/50 text-xs">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-slate-500">Namespace:</span>
+                    <span className="text-slate-200 font-mono">{namespace}</span>
+                  </div>
+                  <div className="h-3 w-px bg-slate-800" />
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-slate-500">Node:</span>
+                    <span className="text-slate-200 font-mono">{node}</span>
+                  </div>
+                  <div className="h-3 w-px bg-slate-800" />
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-slate-500">IP:</span>
+                    <span className="text-slate-200 font-mono">{ip}</span>
+                  </div>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
 
           {/* Debug container banner */}
           {debugContainer && (
-            <div className="mt-3 flex items-center gap-2 px-3 py-2 rounded-md border border-accent/30 bg-accent/10">
-              <Bug className="w-4 h-4 text-accent shrink-0" />
-              <span className="text-xs text-accent font-medium">Debug:</span>
+            <div className="flex items-center gap-2 px-4 py-2 border-t border-slate-800/50 bg-emerald-500/5">
+              <Bug className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+              <span className="text-xs text-emerald-400 font-medium">Debug:</span>
               <span className="text-xs text-slate-200">{debugContainer.name}</span>
-              <span className="text-[10px] font-mono text-accent/70 bg-accent/10 px-1.5 py-0.5 rounded">
+              <span className="text-[10px] font-mono text-emerald-400/70 bg-emerald-500/10 px-1.5 py-0.5 rounded">
                 {debugContainer.image}
               </span>
-              <button
-                disabled={stoppingDebug}
-                onClick={async () => {
-                  const dc = debugContainer;
-                  if (!dc) return;
-                  setStoppingDebug(true);
-                  try {
-                    await stopDebugContainer(namespace, podName, dc.name);
-                    setDebugContainer(undefined);
-                    toast("Debug container stopped", "success");
-                  } catch (err) {
-                    toast(`Failed to stop debug container: ${formatError(err)}`, "error");
-                  } finally {
-                    setStoppingDebug(false);
-                  }
-                }}
-                className="ml-auto text-xs text-slate-400 hover:text-slate-200 px-2 py-1 rounded border border-slate-700 hover:border-slate-600 transition disabled:opacity-50"
-              >
-                {stoppingDebug ? "Stopping..." : "Disconnect"}
-              </button>
             </div>
           )}
         </div>
@@ -789,6 +786,84 @@ export function PodDetailsView({ pod, onBack }: PodDetailsViewProps) {
                 )}
               </button>
             ))}
+          </div>
+        )}
+
+        {/* Contextual Toolbar — Logs tab */}
+        {!isDeleted && activeTab === "logs" && (
+          <div className="flex items-center gap-2 px-4 py-1.5 border-b border-slate-800/50 bg-surface/30">
+            {/* Container selector */}
+            {containers.length > 1 && (
+              <select
+                value={selectedContainer || ""}
+                onChange={(e) => setSelectedContainer(e.target.value || undefined)}
+                className="px-2 py-1 rounded-md border border-slate-800 bg-surface/60 text-xs text-slate-300 outline-none"
+              >
+                <option value="">All containers</option>
+                {containers.map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+              </select>
+            )}
+            {/* Previous toggle */}
+            <label className="flex items-center gap-1.5 px-2 py-1 rounded-md border border-slate-800 hover:border-accent/50 hover:bg-muted/30 transition text-xs cursor-pointer text-slate-300">
+              <input
+                type="checkbox"
+                checked={showPrevious}
+                onChange={(e) => setShowPrevious(e.target.checked)}
+                className="w-3 h-3"
+              />
+              Previous
+            </label>
+            {/* Auto-scroll toggle */}
+            <label className="flex items-center gap-1.5 px-2 py-1 rounded-md border border-slate-800 hover:border-accent/50 hover:bg-muted/30 transition text-xs cursor-pointer text-slate-300">
+              <input
+                type="checkbox"
+                checked={autoScroll}
+                onChange={(e) => setAutoScroll(e.target.checked)}
+                className="w-3 h-3"
+              />
+              Auto-scroll
+            </label>
+
+            <div className="flex-1" />
+
+            {/* Right side: Copy, Download, Search */}
+            <button
+              onClick={handleCopyLogs}
+              aria-label="Copy logs to clipboard"
+              className="flex items-center gap-1.5 px-2 py-1 rounded-md border border-slate-800 hover:border-accent/50 hover:bg-muted/30 transition text-xs text-slate-300"
+            >
+              <Copy className="w-3.5 h-3.5" />
+              Copy
+            </button>
+            <button
+              onClick={handleDownloadLogs}
+              aria-label="Download logs as file"
+              className="flex items-center gap-1.5 px-2 py-1 rounded-md border border-slate-800 hover:border-accent/50 hover:bg-muted/30 transition text-xs text-slate-300"
+            >
+              <Download className="w-3.5 h-3.5" />
+              Download
+            </button>
+            <button
+              onClick={() => {
+                setLogSearchVisible(true);
+                if (focusTimeoutRef.current) clearTimeout(focusTimeoutRef.current);
+                focusTimeoutRef.current = setTimeout(() => logSearchInputRef.current?.focus(), 50);
+              }}
+              aria-label="Search logs"
+              className={cn(
+                "flex items-center gap-1.5 px-2 py-1 rounded-md border transition text-xs",
+                logSearchVisible
+                  ? "border-accent/50 bg-accent/15 text-accent"
+                  : "border-slate-800 hover:border-accent/50 hover:bg-muted/30 text-slate-300",
+              )}
+            >
+              <Search className="w-3.5 h-3.5" />
+              <Kbd>⌘F</Kbd>
+            </button>
           </div>
         )}
 
@@ -994,9 +1069,20 @@ export function PodDetailsView({ pod, onBack }: PodDetailsViewProps) {
         />
       </div>
 
-      {/* Port Forwarding Sidebar */}
+      {/* Port Forwarding Sidebar — always mounted, animated visibility */}
       {!isDeleted && activeTab !== "shell" && (
-        <PortForwarding namespace={namespace} podName={podName} />
+        <motion.div
+          animate={{ width: showPortForward ? 320 : 0, opacity: showPortForward ? 1 : 0 }}
+          initial={false}
+          transition={{ duration: 0.2, ease: "easeInOut" }}
+          className="overflow-hidden shrink-0"
+        >
+          <PortForwarding
+            namespace={namespace}
+            podName={podName}
+            onActiveCountChange={setActivePortForwards}
+          />
+        </motion.div>
       )}
     </motion.div>
   );

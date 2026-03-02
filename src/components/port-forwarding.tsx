@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Plug, X, ExternalLink, AlertCircle, Loader2 } from "lucide-react";
 import { startPortForward, stopPortForward } from "@/lib/api";
@@ -9,15 +9,21 @@ import { useToast } from "./toast";
 interface PortForwardingProps {
   namespace: string;
   podName: string;
+  onActiveCountChange?: (count: number) => void;
 }
 
-export function PortForwarding({ namespace, podName }: PortForwardingProps) {
+export function PortForwarding({ namespace, podName, onActiveCountChange }: PortForwardingProps) {
   const [portForwards, setPortForwards] = useState<PortForwardInfo[]>([]);
   const [localPortInput, setLocalPortInput] = useState<string>("8080");
   const [podPortInput, setPodPortInput] = useState<string>("80");
   const [isStarting, setIsStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const toast = useToast();
+
+  useEffect(() => {
+    const activeCount = portForwards.filter((pf) => pf.status === "active").length;
+    onActiveCountChange?.(activeCount);
+  }, [portForwards, onActiveCountChange]);
 
   const getRandomPort = (): number => {
     return Math.floor(Math.random() * (65535 - 49152 + 1)) + 49152;
