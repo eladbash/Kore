@@ -17,6 +17,9 @@ import { AIPanel } from "./components/ai-panel";
 import { AIChatView } from "./components/ai-chat-view";
 import { ConnectionSetup } from "./components/connection-setup";
 import { NetworkPolicyView } from "./components/network-policy-view";
+import { RbacView } from "./components/rbac-view";
+import { RbacImpersonationBanner } from "./components/rbac-impersonation-banner";
+import type { RbacIdentity, ForbiddenAnalysis } from "./lib/api";
 import { useK8sContext } from "./hooks/use-k8s-context";
 import { useResourceWatch } from "./hooks/use-resource-watch";
 import { useKeyboardShortcuts } from "./hooks/use-keyboard-shortcuts";
@@ -112,6 +115,8 @@ export default function App() {
   } | null>(null);
   const [aiPanelOpen, setAiPanelOpen] = useState(false);
   const [multiCluster, setMultiCluster] = useState(false);
+  const [impersonatedIdentity, setImpersonatedIdentity] = useState<RbacIdentity | null>(null);
+  const [forbiddenAnalysis, setForbiddenAnalysis] = useState<ForbiddenAnalysis | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const toast = useToast();
   const { pinned, togglePin, isPinned, removePin } = usePinnedResources();
@@ -205,6 +210,11 @@ export default function App() {
       if (e.key === "?" && !paletteOpen) {
         e.preventDefault();
         setShortcutsOpen((v) => !v);
+      }
+      if (e.key === "r" && (e.metaKey || e.ctrlKey) && e.shiftKey) {
+        e.preventDefault();
+        setViewMode("rbac");
+        return;
       }
       if (viewMode === "table" && !paletteOpen && !shortcutsOpen) {
         if (e.key === "j") {
@@ -370,7 +380,16 @@ export default function App() {
         multiCluster={multiCluster}
         onMultiClusterToggle={setMultiCluster}
       />
-      <main className="flex-1 p-4 grid grid-rows-[auto,1fr] gap-3">
+      <main className="flex-1 flex flex-col overflow-hidden">
+        <AnimatePresence>
+          {impersonatedIdentity && (
+            <RbacImpersonationBanner
+              identity={impersonatedIdentity}
+              onExit={() => setImpersonatedIdentity(null)}
+            />
+          )}
+        </AnimatePresence>
+        <div className="flex-1 p-4 grid grid-rows-[auto,1fr] gap-3">
         {showHeader && (
           <header className="flex flex-col gap-2">
             <div className="flex items-center gap-3">
@@ -465,6 +484,15 @@ export default function App() {
                 namespace={namespace === "*" ? undefined : namespace}
                 currentContext={currentContext}
               />
+            ) : viewMode === "rbac" ? (
+              <RbacView
+                key="rbac"
+                namespace={namespace === "*" ? undefined : namespace}
+                onBack={() => setViewMode("table")}
+                initialAnalysis={forbiddenAnalysis}
+                impersonatedIdentity={impersonatedIdentity}
+                onSetImpersonation={setImpersonatedIdentity}
+              />
             ) : viewMode === "crds" ? (
               <CrdBrowser
                 key="crds"
@@ -519,6 +547,7 @@ export default function App() {
             ) : null}
           </AnimatePresence>
         </section>
+        </div>
       </main>
 
       <CommandPalette
