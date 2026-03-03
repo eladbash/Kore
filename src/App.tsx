@@ -116,7 +116,7 @@ export default function App() {
   const [aiPanelOpen, setAiPanelOpen] = useState(false);
   const [multiCluster, setMultiCluster] = useState(false);
   const [impersonatedIdentity, setImpersonatedIdentity] = useState<RbacIdentity | null>(null);
-  const [forbiddenAnalysis, setForbiddenAnalysis] = useState<ForbiddenAnalysis | null>(null);
+  const [forbiddenAnalysis, _setForbiddenAnalysis] = useState<ForbiddenAnalysis | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const toast = useToast();
   const { pinned, togglePin, isPinned, removePin } = usePinnedResources();

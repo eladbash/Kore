@@ -1105,10 +1105,10 @@ impl K8sState {
 
             return Ok(NaturalLanguageRbacResult {
                 query: query.to_string(),
-                parsed_verb: parsed_verb,
-                parsed_resource: parsed_resource,
+                parsed_verb,
+                parsed_resource,
                 parsed_identity: None,
-                parsed_namespace: parsed_namespace,
+                parsed_namespace,
                 result: None,
                 who_can_results,
             });
@@ -1181,8 +1181,8 @@ fn check_permission_from_snapshot(
         );
 
         for rule in rules {
-            let rule_resources = rule.resources.as_ref().map(|r| r.as_slice()).unwrap_or(&[]);
-            let rule_api_groups = rule.api_groups.as_ref().map(|g| g.as_slice()).unwrap_or(&[]);
+            let rule_resources = rule.resources.as_deref().unwrap_or(&[]);
+            let rule_api_groups = rule.api_groups.as_deref().unwrap_or(&[]);
 
             if rule_matches_verb(&rule.verbs, verb)
                 && rule_matches_resource(rule_resources, res_base)
@@ -1227,9 +1227,9 @@ fn check_permission_from_snapshot(
 
             for rule in rules {
                 let rule_resources =
-                    rule.resources.as_ref().map(|r| r.as_slice()).unwrap_or(&[]);
+                    rule.resources.as_deref().unwrap_or(&[]);
                 let rule_api_groups =
-                    rule.api_groups.as_ref().map(|g| g.as_slice()).unwrap_or(&[]);
+                    rule.api_groups.as_deref().unwrap_or(&[]);
 
                 if rule_matches_verb(&rule.verbs, verb)
                     && rule_matches_resource(rule_resources, res_base)
@@ -1263,10 +1263,7 @@ fn check_permission_from_snapshot(
             first.role_kind, first.role_name, first.binding_kind, first.binding_name
         )
     } else {
-        format!(
-            "{} cannot {} {} in {}",
-            identity, verb, resource, ns_display
-        )
+        format!("{identity} cannot {verb} {resource} in {ns_display}")
     };
 
     PermissionCheckResult {
@@ -1329,18 +1326,17 @@ fn find_closest_rules(
             let rules = resolve_role_rules(role_kind, role_name, role_ns, snapshot);
             for rule in rules {
                 let rule_resources =
-                    rule.resources.as_ref().map(|r| r.as_slice()).unwrap_or(&[]);
+                    rule.resources.as_deref().unwrap_or(&[]);
                 let rule_api_groups =
-                    rule.api_groups.as_ref().map(|g| g.as_slice()).unwrap_or(&[]);
+                    rule.api_groups.as_deref().unwrap_or(&[]);
 
                 let resource_match = rule_matches_resource(rule_resources, res_base);
                 let verb_match = rule_matches_verb(&rule.verbs, verb);
                 let group_match = rule_matches_api_group(rule_api_groups, api_group);
 
-                // Partial match: resource matches but verb doesn't, or verb matches but resource doesn't
-                if (resource_match && group_match && !verb_match)
-                    || (verb_match && group_match && !resource_match)
-                    || (verb_match && resource_match && !group_match)
+                // Partial match: exactly 2 of 3 (verb, resource, group) match
+                let matches = u8::from(verb_match) + u8::from(resource_match) + u8::from(group_match);
+                if matches == 2
                 {
                     closest.push(RuleChainEntry {
                         role_kind: role_kind.to_string(),
