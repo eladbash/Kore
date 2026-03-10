@@ -9,6 +9,8 @@ import {
   Palette,
   Globe,
   Layout,
+  Info,
+  RefreshCw,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { AppView } from "@/lib/types";
@@ -127,9 +129,17 @@ function Kbd({ children }: { children: React.ReactNode }) {
 
 interface SettingsProps {
   onBack: () => void;
+  currentVersion?: string | null;
+  onCheckForUpdates?: () => void;
+  updateChecking?: boolean;
 }
 
-export function Settings({ onBack }: SettingsProps) {
+export function Settings({
+  onBack,
+  currentVersion,
+  onCheckForUpdates,
+  updateChecking,
+}: SettingsProps) {
   const [settings, setSettings] = useState<KoreSettings>(() => loadSettings());
   const [contextInput, setContextInput] = useState("");
   const [namespaceInput, setNamespaceInput] = useState("");
@@ -413,6 +423,37 @@ export function Settings({ onBack }: SettingsProps) {
                 </div>
               </div>
             ))}
+          </div>
+        </motion.div>
+
+        {/* About Section */}
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.2 }}
+          className="glass rounded-xl p-5"
+        >
+          <div className="flex items-center gap-2 mb-4">
+            <Info className="w-4 h-4 text-accent" />
+            <h2 className="text-sm font-semibold text-slate-100">About</h2>
+          </div>
+
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-slate-400">Current Version</span>
+              <span className="text-xs font-mono text-slate-200">
+                {currentVersion ?? "unknown"}
+              </span>
+            </div>
+
+            <button
+              onClick={onCheckForUpdates}
+              disabled={updateChecking}
+              className="flex items-center gap-2 px-3 py-2 bg-background border border-slate-800 rounded-md text-xs text-slate-300 hover:border-accent/50 hover:text-slate-100 transition disabled:opacity-50"
+            >
+              <RefreshCw className={cn("w-3.5 h-3.5", updateChecking && "animate-spin")} />
+              {updateChecking ? "Checking..." : "Check for Updates"}
+            </button>
           </div>
         </motion.div>
       </div>
