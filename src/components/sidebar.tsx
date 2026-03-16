@@ -193,57 +193,58 @@ export function Sidebar({
         </button>
       </div>
 
-      {/* Special Views */}
-      <div className="px-4 mb-3">
-        <p className="text-[10px] uppercase tracking-wider text-slate-500 mb-1.5 font-medium">
-          Views
-        </p>
-        <div className="space-y-0.5 relative">
-          {specialViews.map(({ id, label, icon: Icon }) => {
-            const isActive = isViewActive(id);
-            return (
-              <button
-                key={id}
-                onClick={() => onViewChange?.(id)}
-                className={cn(
-                  "w-full px-3 py-1.5 rounded-md transition flex items-center gap-2.5 text-sm relative",
-                  isActive
-                    ? "text-accent"
-                    : "text-slate-400 hover:text-slate-200 hover:bg-muted/30",
-                )}
-              >
-                {isActive && (
-                  <motion.div
-                    layoutId="sidebar-active-indicator"
-                    className="absolute left-0 top-0.5 bottom-0.5 w-0.5 bg-accent rounded-full"
-                    transition={{ type: "spring", stiffness: 500, damping: 35 }}
-                  />
-                )}
-                <Icon className="w-4 h-4" />
-                <span className="flex-1 text-left">{label}</span>
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* Pinned Resources */}
-      {pinned.length > 0 && (
-        <div className="px-4 mb-3">
-          <p className="text-[10px] uppercase tracking-wider text-slate-500 mb-1.5 font-medium flex items-center gap-1">
-            <Star className="w-3 h-3" />
-            Pinned
+      {/* Scrollable navigation — Views, Pinned, and Resources scroll together */}
+      <div className="flex-1 overflow-auto px-4">
+        {/* Special Views */}
+        <div className="mb-3">
+          <p className="text-[10px] uppercase tracking-wider text-slate-500 mb-1.5 font-medium">
+            Views
           </p>
-          <PinnedResources
-            pinned={pinned}
-            onSelect={(kind, name, namespace) => onPinSelect?.(kind, name, namespace)}
-            onRemove={(kind, name, namespace) => onPinRemove?.(kind, name, namespace)}
-          />
+          <div className="space-y-0.5 relative">
+            {specialViews.map(({ id, label, icon: Icon }) => {
+              const isActive = isViewActive(id);
+              return (
+                <button
+                  key={id}
+                  onClick={() => onViewChange?.(id)}
+                  className={cn(
+                    "w-full px-3 py-1.5 rounded-md transition flex items-center gap-2.5 text-sm relative",
+                    isActive
+                      ? "text-accent"
+                      : "text-slate-400 hover:text-slate-200 hover:bg-muted/30",
+                  )}
+                >
+                  {isActive && (
+                    <motion.div
+                      layoutId="sidebar-active-indicator"
+                      className="absolute left-0 top-0.5 bottom-0.5 w-0.5 bg-accent rounded-full"
+                      transition={{ type: "spring", stiffness: 500, damping: 35 }}
+                    />
+                  )}
+                  <Icon className="w-4 h-4" />
+                  <span className="flex-1 text-left">{label}</span>
+                </button>
+              );
+            })}
+          </div>
         </div>
-      )}
 
-      {/* Resources — grouped */}
-      <div className="px-4 flex-1 overflow-auto">
+        {/* Pinned Resources */}
+        {pinned.length > 0 && (
+          <div className="mb-3">
+            <p className="text-[10px] uppercase tracking-wider text-slate-500 mb-1.5 font-medium flex items-center gap-1">
+              <Star className="w-3 h-3" />
+              Pinned
+            </p>
+            <PinnedResources
+              pinned={pinned}
+              onSelect={(kind, name, namespace) => onPinSelect?.(kind, name, namespace)}
+              onRemove={(kind, name, namespace) => onPinRemove?.(kind, name, namespace)}
+            />
+          </div>
+        )}
+
+        {/* Resources — grouped */}
         {menuGroups.map((group) => (
           <div key={group.label} className="mb-3">
             <p className="text-[10px] uppercase tracking-wider text-slate-500 mb-1.5 font-medium">
